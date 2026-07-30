@@ -1,0 +1,1159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal : by MuMaFi</title>
+<style>
+  :root{
+    --bg: #0a0a0d;
+    --bg2: #141419;
+    --panel: #191920;
+    --panel2: #1f1f28;
+    --line: #2a2a34;
+    --text: #f0f0f3;
+    --sub: #8d8d98;
+    --accent: #ff6b4a;
+    --accent-dim: #7a3626;
+    --accent2: #34d6c0;
+    --accent2-dim: #1a5c53;
+    --warn: #e0b23c;
+    --radius: 16px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;}
+  body{
+    min-height:100vh;padding:32px 16px 70px;
+    background:
+      radial-gradient(circle at 15% -10%, rgba(255,107,74,0.12), transparent 45%),
+      radial-gradient(circle at 90% 10%, rgba(52,214,192,0.10), transparent 40%),
+      var(--bg);
+  }
+  .wrap{max-width:900px;margin:0 auto;}
+  header{margin-bottom:32px;display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;}
+  h1{font-size:1.4rem;letter-spacing:0.14em;margin:0;font-weight:800;}
+  h1 .brand-dot{color:var(--accent);}
+  h1 .brand-by{
+    font-size:0.62rem;letter-spacing:0.04em;font-weight:500;
+    color:#45454f;margin-left:8px;text-transform:none;
+  }
+  .tagline{color:var(--sub);font-size:0.82rem;margin:4px 0 0;}
+
+  @keyframes fadeIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+
+  .dropzone{
+    border:1.5px dashed var(--line);
+    border-radius:var(--radius);
+    padding:46px 20px;
+    text-align:center;
+    cursor:pointer;
+    background:linear-gradient(180deg, var(--panel), var(--bg2));
+    transition:border-color .18s, background .18s, transform .18s;
+    margin-bottom:20px;
+  }
+  .dropzone:hover{border-color:#42424e;transform:translateY(-1px);}
+  .dropzone.drag{border-color:var(--accent);background:linear-gradient(180deg,#221510,var(--bg2));}
+  .dropzone p{margin:0;color:var(--sub);font-size:0.9rem;}
+  .dropzone strong{color:var(--text);font-size:1.02rem;}
+  input[type=file]{display:none;}
+
+  .filebar{
+    display:none;
+    align-items:center;
+    justify-content:space-between;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:11px 16px;
+    margin-bottom:20px;
+    font-size:0.85rem;
+  }
+  .filebar.show{display:flex;}
+  .filebar .fname{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%;}
+  .filebar button{
+    background:none;border:1px solid var(--line);color:var(--sub);
+    border-radius:8px;padding:6px 12px;cursor:pointer;font-size:0.78rem;
+    transition:border-color .15s, color .15s;
+  }
+  .filebar button:hover{border-color:var(--accent);color:var(--text);}
+
+  section{
+    background:linear-gradient(180deg, var(--panel), var(--panel2) 220%);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:22px;
+    margin-bottom:18px;
+    display:none;
+    box-shadow:0 8px 24px -12px rgba(0,0,0,0.5);
+  }
+  section.show{display:block;animation:fadeIn .35s ease both;}
+  section h2{
+    font-size:0.72rem;text-transform:uppercase;letter-spacing:0.14em;
+    color:var(--sub);margin:0 0 16px;font-weight:700;
+  }
+
+  /* Loading screen */
+  .analysing{
+    color:var(--accent2);font-size:1rem;display:flex;align-items:center;gap:12px;
+    padding:26px 0;justify-content:center;font-weight:600;
+  }
+  .spinner{
+    width:20px;height:20px;border-radius:50%;
+    border:2.5px solid rgba(52,214,192,0.25);border-top-color:var(--accent2);
+    animation:spin .8s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  /* Presets */
+  .presets{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;}
+  .preset{
+    background:var(--bg2);border:1.5px solid var(--line);border-left:4px solid var(--line);border-radius:12px;
+    padding:16px 14px;cursor:pointer;transition:border-color .12s, transform .12s, background .12s;
+  }
+  .preset:hover{border-color:#46464f;transform:translateY(-2px);}
+  .preset.active{border-color:var(--accent);border-left-color:var(--accent);background:#20140f;}
+  .preset .pname{font-weight:700;font-size:0.95rem;margin-bottom:4px;}
+  .preset .pdesc{font-size:0.76rem;color:var(--sub);line-height:1.4;}
+
+  .intensity-row{margin-top:20px;display:flex;align-items:center;gap:14px;}
+  .intensity-row label{font-size:0.78rem;color:var(--sub);white-space:nowrap;}
+  input[type=range]{flex:1;accent-color:var(--accent);}
+  .intval{font-size:0.85rem;color:var(--text);min-width:36px;text-align:right;font-weight:600;}
+
+  /* AB / Play */
+  .playbar{display:flex;align-items:center;gap:12px;margin-top:4px;flex-wrap:wrap;}
+  .btn{
+    background:linear-gradient(180deg, var(--accent), #d9502f);color:#fff;border:none;border-radius:10px;
+    padding:11px 20px;font-size:0.85rem;font-weight:700;cursor:pointer;
+    display:inline-flex;align-items:center;gap:8px;
+    transition:transform .12s, box-shadow .12s;
+    box-shadow:0 4px 14px -6px rgba(255,107,74,0.5);
+  }
+  .btn:hover{transform:translateY(-1px);}
+  .btn.secondary{background:transparent;border:1px solid var(--line);color:var(--text);box-shadow:none;}
+  .btn.secondary:hover{border-color:var(--accent2);}
+  .btn:disabled{opacity:0.4;cursor:not-allowed;transform:none;}
+  .ab-toggle{display:flex;background:var(--bg2);border-radius:10px;overflow:hidden;border:1px solid var(--line);}
+  .ab-toggle button{
+    background:none;border:none;color:var(--sub);padding:9px 18px;cursor:pointer;font-size:0.8rem;font-weight:700;
+    transition:background .15s, color .15s;
+  }
+  .ab-toggle button.active{background:var(--accent);color:#fff;}
+
+  .lufs-target{font-size:0.78rem;color:var(--sub);margin-top:12px;}
+  .lufs-target b{color:var(--accent2);}
+
+  .export-row{margin-top:18px;}
+  progress{width:100%;height:8px;border-radius:4px;overflow:hidden;accent-color:var(--accent2);}
+  .hint{font-size:0.72rem;color:var(--sub);margin-top:10px;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>SIGNAL<span class="brand-dot">.</span><span class="brand-by">by MuMaFi</span></h1>
+    <p class="tagline">Mood → Style → Master. Runs entirely in your browser.</p>
+  </header>
+
+  <div class="dropzone" id="dropzone">
+    <p><strong>Drop your track here</strong> or click to browse</p>
+    <p style="margin-top:6px;">WAV, MP3, FLAC, AIFF — stays in your browser, never uploaded anywhere</p>
+    <input type="file" id="fileInput" accept="audio/*">
+  </div>
+
+  <div class="filebar" id="filebar">
+    <span class="fname" id="fname"></span>
+    <button id="clearBtn">Remove</button>
+  </div>
+
+  <section id="loadingSection">
+    <div class="analysing"><div class="spinner"></div> <span id="loadingText">Analyzing …</span></div>
+  </section>
+
+  <section id="presetSection">
+    <h2>Choose a mastering style</h2>
+    <div class="presets" id="presetGrid"></div>
+
+    <div class="intensity-row">
+      <label>Intensity</label>
+      <input type="range" id="intensitySlider" min="0" max="100" value="65">
+      <span class="intval" id="intensityVal">65%</span>
+    </div>
+
+    <div class="lufs-target">Target loudness: <b id="targetLufs">−11 LUFS</b> (optimized for streaming)</div>
+
+    <button class="btn" id="confirmPresetBtn" style="margin-top:20px;">Master →</button>
+  </section>
+
+  <section id="resultSection">
+    <h2>Original vs. Mastered</h2>
+    <div class="playbar">
+      <button class="btn" id="playBtn">▶ Play</button>
+      <div class="ab-toggle">
+        <button id="btnOrig" class="active">Original</button>
+        <button id="btnMastered">Mastered</button>
+      </div>
+      <span id="playTime" style="color:var(--sub);font-size:0.8rem;"></span>
+    </div>
+    <div class="export-row">
+      <button class="btn secondary" id="exportBtn">Export as WAV</button>
+      <progress id="exportProgress" value="0" max="100" style="display:none;margin-top:10px;"></progress>
+    </div>
+    <p class="hint">Export renders the full track offline with the currently selected style + intensity. May take a few seconds for longer tracks.</p>
+    <button class="btn secondary" id="backToPresetBtn" style="margin-top:14px;">← Choose a different style</button>
+  </section>
+
+</div>
+
+<script>
+(() => {
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const filebar = document.getElementById('filebar');
+  const fname = document.getElementById('fname');
+  const clearBtn = document.getElementById('clearBtn');
+
+  const loadingSection = document.getElementById('loadingSection');
+  const loadingText = document.getElementById('loadingText');
+  const presetSection = document.getElementById('presetSection');
+  const resultSection = document.getElementById('resultSection');
+  const presetGrid = document.getElementById('presetGrid');
+  const confirmPresetBtn = document.getElementById('confirmPresetBtn');
+
+  const intensitySlider = document.getElementById('intensitySlider');
+  const intensityVal = document.getElementById('intensityVal');
+  const targetLufsEl = document.getElementById('targetLufs');
+
+  const playBtn = document.getElementById('playBtn');
+  const btnOrig = document.getElementById('btnOrig');
+  const btnMastered = document.getElementById('btnMastered');
+  const playTime = document.getElementById('playTime');
+  const exportBtn = document.getElementById('exportBtn');
+  const exportProgress = document.getElementById('exportProgress');
+  const backToPresetBtn = document.getElementById('backToPresetBtn');
+
+  let audioCtx = null;
+  let originalBuffer = null;
+  let analysisData = null;
+  let currentPreset = null;
+  let currentIntensity = 0.65;
+  let playingSource = null;
+  let playMode = 'orig'; // 'orig' | 'mastered'
+  let isPlaying = false;
+  let playStartedAt = 0;
+  let currentTrim = 1.0;
+  let fineAnalysisToken = 0;
+
+  // ---------- Presets ----------
+  // Four mastering styles, each pushed as far as it can go while staying musical —
+  // no mood picker, just four distinct, deliberately opinionated masters. Each one
+  // is a full chain: multiband compression (3 bands, independent dynamics instead
+  // of a static EQ boost), harmonic saturation, an exciter for real "air" (not just
+  // an EQ boost), Mid/Side stereo width, a parallel ("NY-style") glue compressor for
+  // punch, and a two-stage limiter — the same building blocks LANDR, Dolby.io and
+  // BandLab's mastering engines are built from.
+  const PRESETS = [
+    {
+      id: 'blackout',
+      name: 'Blackout',
+      desc: 'Dark and heavy with real low-end punch. Tight, focused bass, weight without mud.',
+      targetLufs: -9.8,
+      bands: {
+        low:  { thresh: -25, ratio: 4.6, attack: 0.018, release: 0.24, makeup: 2.05 },
+        mid:  { thresh: -19, ratio: 2.4, attack: 0.009, release: 0.18, makeup: 1.02 },
+        high: { thresh: -21, ratio: 1.9, attack: 0.005, release: 0.13, makeup: 0.95 },
+      },
+      eq: [
+        { freq: 75,    gain: 2.2,  type: 'lowshelf', Q: 0.7 },
+        { freq: 3200,  gain: -1.8, type: 'peaking',  Q: 1.0 },
+        { freq: 9500,  gain: 0.3,  type: 'highshelf', Q: 0.7 },
+      ],
+      saturation: 0.34,
+      air: 0.05,
+      stereoWidth: 0.72,
+      glue: { thresh: -15, ratio: 4.4, attack: 0.012, release: 0.22, mix: 0.65 },
+    },
+    {
+      id: 'chromeline',
+      name: 'Chromeline',
+      desc: 'Bright, upfront and catchy. Built for immediate presence — sits right in front of you, not behind glass.',
+      targetLufs: -9.2,
+      bands: {
+        low:  { thresh: -21, ratio: 3.6, attack: 0.008, release: 0.16, makeup: 1.4 },
+        mid:  { thresh: -18, ratio: 3.6, attack: 0.004, release: 0.1,  makeup: 1.2 },
+        high: { thresh: -19, ratio: 2.6, attack: 0.004, release: 0.09, makeup: 1.15 },
+      },
+      eq: [
+        { freq: 3000,  gain: 2.2, type: 'peaking',   Q: 1.0 },
+        { freq: 6500,  gain: 1.4, type: 'peaking',   Q: 1.1 },
+        { freq: 11000, gain: 1.6, type: 'highshelf', Q: 0.7 },
+      ],
+      saturation: 0.30,
+      air: 0.35,
+      stereoWidth: 1.02,
+      glue: { thresh: -14, ratio: 4.6, attack: 0.003, release: 0.09, mix: 0.7 },
+    },
+    {
+      id: 'driftwood',
+      name: 'Driftwood',
+      desc: 'Warm and nostalgic. Full-bodied and intimate rather than empty — like an old favorite record.',
+      targetLufs: -12.5,
+      bands: {
+        low:  { thresh: -23, ratio: 2.0, attack: 0.022, release: 0.32, makeup: 1.35 },
+        mid:  { thresh: -21, ratio: 1.7, attack: 0.018, release: 0.26, makeup: 1.1 },
+        high: { thresh: -23, ratio: 1.4, attack: 0.015, release: 0.22, makeup: 0.92 },
+      },
+      eq: [
+        { freq: 250,  gain: 1.6,  type: 'peaking',   Q: 0.8 },
+        { freq: 900,  gain: 0.8,  type: 'peaking',   Q: 0.8 },
+        { freq: 8000, gain: -1.4, type: 'highshelf', Q: 0.7 },
+      ],
+      saturation: 0.22,
+      air: 0.06,
+      stereoWidth: 0.94,
+      glue: { thresh: -21, ratio: 2.2, attack: 0.028, release: 0.34, mix: 0.4 },
+    },
+    {
+      id: 'halo',
+      name: 'Halo',
+      desc: 'Smooth and balanced — a clean, universal polish that works on almost anything.',
+      targetLufs: -11.2,
+      bands: {
+        low:  { thresh: -22, ratio: 2.4, attack: 0.014, release: 0.24, makeup: 1.25 },
+        mid:  { thresh: -20, ratio: 1.9, attack: 0.011, release: 0.2,  makeup: 1.05 },
+        high: { thresh: -22, ratio: 1.5, attack: 0.009, release: 0.16, makeup: 1.05 },
+      },
+      eq: [
+        { freq: 700,   gain: -0.6, type: 'peaking',   Q: 0.9 },
+        { freq: 3200,  gain: 0.6,  type: 'peaking',   Q: 1.0 },
+        { freq: 11000, gain: 1.8,  type: 'highshelf', Q: 0.7 },
+      ],
+      saturation: 0.16,
+      air: 0.22,
+      stereoWidth: 1.1,
+      glue: { thresh: -20, ratio: 2.4, attack: 0.016, release: 0.26, mix: 0.5 },
+    },
+  ];
+
+  PRESETS.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'preset';
+    div.dataset.id = p.id;
+    div.innerHTML = `<div class="pname">${p.name}</div><div class="pdesc">${p.desc}</div>`;
+    div.addEventListener('click', () => selectPreset(p.id));
+    presetGrid.appendChild(div);
+  });
+
+  function selectPreset(id) {
+    currentPreset = PRESETS.find(p => p.id === id);
+    document.querySelectorAll('.preset').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === id);
+    });
+    targetLufsEl.textContent = `${currentPreset.targetLufs} LUFS`;
+    if (isPlaying) restartPlayback();
+  }
+
+  intensitySlider.addEventListener('input', () => {
+    currentIntensity = intensitySlider.value / 100;
+    intensityVal.textContent = intensitySlider.value + '%';
+    if (isPlaying) restartPlayback();
+  });
+
+  confirmPresetBtn.addEventListener('click', async () => {
+    if (!currentPreset) return;
+    showOnly(loadingSection);
+    loadingText.textContent = 'Mastering …';
+    const started = Date.now();
+    await runFineAnalysis();
+    const rest = 400 - (Date.now() - started); // just enough to avoid a jarring flash
+    if (rest > 0) await wait(rest);
+    showOnly(resultSection);
+  });
+
+  backToPresetBtn.addEventListener('click', () => {
+    stopPlayback();
+    showOnly(presetSection);
+  });
+
+  // ---------- File handling ----------
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag');
+    if (e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', e => {
+    if (e.target.files.length) loadFile(e.target.files[0]);
+  });
+  clearBtn.addEventListener('click', resetAll);
+
+  function showOnly(sectionEl) {
+    [presetSection, loadingSection, resultSection].forEach(s => s.classList.remove('show'));
+    if (sectionEl) sectionEl.classList.add('show');
+  }
+
+  function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  function resetAll() {
+    stopPlayback();
+    originalBuffer = null;
+    analysisData = null;
+    currentPreset = null;
+    currentTrim = 1.0;
+    fineAnalysisToken++;
+    filebar.classList.remove('show');
+    showOnly(null);
+    document.querySelectorAll('.preset').forEach(el => el.classList.remove('active'));
+    fileInput.value = '';
+  }
+
+  async function loadFile(file) {
+    resetAll();
+    fname.textContent = file.name;
+    filebar.classList.add('show');
+
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const arrayBuf = await file.arrayBuffer();
+    try {
+      originalBuffer = await audioCtx.decodeAudioData(arrayBuf);
+    } catch (err) {
+      alert('Could not decode this file. Please use WAV, MP3, FLAC, or AIFF.');
+      return;
+    }
+
+    loadingText.textContent = 'Analyzing your track …';
+    showOnly(loadingSection);
+    await wait(50); // let the loading screen actually paint before the analysis runs
+
+    const started = Date.now();
+    analysisData = analyzeBuffer(originalBuffer);
+    const elapsed = Date.now() - started;
+    const floor = 400; // just enough to avoid a jarring instant flash, not padding
+    if (elapsed < floor) await wait(floor - elapsed);
+
+    selectPreset(recommendPreset(analysisData));
+    showOnly(presetSection);
+  }
+
+  // ---------- Analysis engine (produces metrics used for preset recommendation) ----------
+  function analyzeBuffer(buffer) {
+    const ch0 = buffer.getChannelData(0);
+    const ch1 = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : ch0;
+    const sr = buffer.sampleRate;
+    const n = ch0.length;
+
+    const stage1 = kWeightFilter(ch0, sr);
+    const stage1R = kWeightFilter(ch1, sr);
+
+    let sumSq = 0;
+    let peak = 0;
+    for (let i = 0; i < n; i++) {
+      const l = stage1[i], r = stage1R[i];
+      sumSq += (l*l + r*r) / 2;
+      const rawPeak = Math.max(Math.abs(ch0[i]), Math.abs(ch1[i]));
+      if (rawPeak > peak) peak = rawPeak;
+    }
+    const meanSq = sumSq / n;
+    const lufs = -0.691 + 10 * Math.log10(meanSq || 1e-12);
+    const truePeakDb = 20 * Math.log10(peak || 1e-12);
+
+    const blockSize = Math.floor(sr * 0.4);
+    const blockRms = [];
+    for (let i = 0; i + blockSize < n; i += blockSize) {
+      let s = 0;
+      for (let j = i; j < i + blockSize; j++) s += ch0[j]*ch0[j];
+      blockRms.push(Math.sqrt(s / blockSize));
+    }
+    blockRms.sort((a,b) => b - a);
+    const loudest20 = blockRms.slice(0, Math.max(1, Math.floor(blockRms.length * 0.2)));
+    const avgLoud = loudest20.reduce((a,b)=>a+b,0) / loudest20.length;
+    const avgLoudDb = 20 * Math.log10(avgLoud || 1e-12);
+    const dynamicRange = Math.abs(truePeakDb - avgLoudDb);
+
+    const fftSize = 8192;
+    const spectrum = computeAveragedSpectrum(ch0, sr, fftSize, 12);
+    const centroid = spectralCentroid(spectrum, sr, fftSize);
+    const balance = bandEnergyRatio(spectrum, sr, fftSize);
+
+    return {
+      lufs: Math.round(lufs * 10) / 10,
+      truePeakDb: Math.round(truePeakDb * 10) / 10,
+      dynamicRange: Math.round(dynamicRange * 10) / 10,
+      centroidHz: Math.round(centroid),
+      duration: buffer.duration,
+      bassRatio: balance.bassRatio,
+      lowMidRatio: balance.lowMidRatio,
+      highMidRatio: balance.highMidRatio,
+      airRatio: balance.airRatio,
+    };
+  }
+
+  function kWeightFilter(data, sr) {
+    const out = new Float32Array(data.length);
+    const hpFc = 60;
+    const hpRC = 1 / (2 * Math.PI * hpFc);
+    const hpDt = 1 / sr;
+    const hpAlpha = hpRC / (hpRC + hpDt);
+    let hpPrevIn = 0, hpPrevOut = 0;
+    for (let i = 0; i < data.length; i++) {
+      const x = data[i];
+      const y = hpAlpha * (hpPrevOut + x - hpPrevIn);
+      hpPrevIn = x; hpPrevOut = y;
+      out[i] = y;
+    }
+    const shelfFc = 1500;
+    const shelfRC = 1 / (2 * Math.PI * shelfFc);
+    const shelfAlpha = shelfRC / (shelfRC + hpDt);
+    let shPrevIn = 0, shPrevOut = 0;
+    for (let i = 0; i < out.length; i++) {
+      const x = out[i];
+      const hp = shelfAlpha * (shPrevOut + x - shPrevIn);
+      shPrevIn = x; shPrevOut = hp;
+      out[i] = out[i] + hp * 0.6;
+    }
+    return out;
+  }
+
+  function computeSpectrum(data, sr, fftSize) {
+    const start = Math.max(0, Math.floor(data.length / 2 - fftSize / 2));
+    const slice = data.slice(start, start + fftSize);
+    const windowed = new Float32Array(fftSize);
+    for (let i = 0; i < fftSize; i++) {
+      const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (fftSize - 1));
+      windowed[i] = (slice[i] || 0) * w;
+    }
+    return fftMagnitude(windowed);
+  }
+
+  // Averages the magnitude spectrum across several windows spread through the whole
+  // track (instead of a single snapshot from the middle) — a quiet bridge or a loud
+  // chorus alone isn't representative of the song, so this gives a much more honest
+  // picture of its actual spectral balance, which is what the adaptive tuning below
+  // is based on.
+  function computeAveragedSpectrum(data, sr, fftSize, numWindows = 12) {
+    const totalMags = new Float32Array(fftSize / 2);
+    let windowsUsed = 0;
+    for (let w = 0; w < numWindows; w++) {
+      const start = Math.floor((w / numWindows) * Math.max(1, data.length - fftSize));
+      if (start < 0 || start + fftSize > data.length) continue;
+      const windowed = new Float32Array(fftSize);
+      for (let i = 0; i < fftSize; i++) {
+        const win = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (fftSize - 1));
+        windowed[i] = data[start + i] * win;
+      }
+      const mags = fftMagnitude(windowed);
+      for (let i = 0; i < mags.length; i++) totalMags[i] += mags[i];
+      windowsUsed++;
+    }
+    if (windowsUsed === 0) return computeSpectrum(data, sr, fftSize);
+    for (let i = 0; i < totalMags.length; i++) totalMags[i] /= windowsUsed;
+    return totalMags;
+  }
+
+  // How much spectral energy sits in each broad region, as a fraction of the total.
+  // Used to compare this specific song against a "typically balanced" mix, so the
+  // mastering can lean back where the song already has plenty and lean in where
+  // it's thin — instead of applying the same fixed boost regardless of the source.
+  function bandEnergyRatio(mags, sr, fftSize) {
+    const energyInRange = (loHz, hiHz) => {
+      const loBin = Math.max(1, Math.floor(loHz * fftSize / sr));
+      const hiBin = Math.min(mags.length, Math.ceil(hiHz * fftSize / sr));
+      let sum = 0, count = 0;
+      for (let i = loBin; i < hiBin; i++) { sum += mags[i] * mags[i]; count++; }
+      return count ? sum / count : 0;
+    };
+    const bass = energyInRange(30, 250);
+    const lowMid = energyInRange(250, 2000);
+    const highMid = energyInRange(2000, 6000);
+    const air = energyInRange(6000, 16000);
+    const total = bass + lowMid + highMid + air || 1;
+    return {
+      bassRatio: bass / total,
+      lowMidRatio: lowMid / total,
+      highMidRatio: highMid / total,
+      airRatio: air / total,
+    };
+  }
+
+  // Reference ratios for a "conventionally balanced" full mix — not a scientific
+  // standard, just a sensible midpoint to measure a song's own balance against.
+  const TYPICAL_BALANCE = { bass: 0.30, lowMid: 0.34, highMid: 0.22, air: 0.14 };
+
+  function adaptiveMultiplier(actual, typical, strength = 3.0) {
+    const diff = actual - typical;
+    const mult = 1 - diff * strength;
+    return Math.max(0.75, Math.min(1.25, mult));
+  }
+
+  function fftMagnitude(input) {
+    const n = input.length;
+    const re = new Float32Array(n);
+    const im = new Float32Array(n);
+    re.set(input);
+
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        [re[i], re[j]] = [re[j], re[i]];
+        [im[i], im[j]] = [im[j], im[i]];
+      }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = -2 * Math.PI / len;
+      const wr = Math.cos(ang), wi = Math.sin(ang);
+      for (let i = 0; i < n; i += len) {
+        let curWr = 1, curWi = 0;
+        for (let j = 0; j < len / 2; j++) {
+          const ur = re[i+j], ui = im[i+j];
+          const vr = re[i+j+len/2]*curWr - im[i+j+len/2]*curWi;
+          const vi = re[i+j+len/2]*curWi + im[i+j+len/2]*curWr;
+          re[i+j] = ur + vr; im[i+j] = ui + vi;
+          re[i+j+len/2] = ur - vr; im[i+j+len/2] = ui - vi;
+          const nwr = curWr*wr - curWi*wi;
+          const nwi = curWr*wi + curWi*wr;
+          curWr = nwr; curWi = nwi;
+        }
+      }
+    }
+    const mags = new Float32Array(n / 2);
+    for (let i = 0; i < n / 2; i++) {
+      mags[i] = Math.sqrt(re[i]*re[i] + im[i]*im[i]);
+    }
+    return mags;
+  }
+
+  function spectralCentroid(mags, sr, fftSize) {
+    let num = 0, den = 0;
+    for (let i = 0; i < mags.length; i++) {
+      const freq = i * sr / fftSize;
+      num += freq * mags[i];
+      den += mags[i];
+    }
+    return den > 0 ? num / den : 0;
+  }
+
+  function recommendPreset(data) {
+    const dr = data.dynamicRange;
+    const c = data.centroidHz;
+
+    if (dr > 12) return 'driftwood';           // dynamic, acoustic-leaning material -> warm/nostalgic
+    if (c < 900) return 'blackout';            // bass-heavy, dark timbre -> dark & punchy
+    if (c > 2600 && dr < 9) return 'chromeline'; // bright + already fairly loud -> catchy/upfront
+    return 'halo';                             // everything else -> smooth, balanced
+  }
+
+  // ---------- Processing Chain (Web Audio Graph) ----------
+  // Multiband compression: the signal is split into three bands (low/mid/high),
+  // each getting its own compressor with its own threshold/ratio/timing. That's
+  // what makes bass react dynamically to transients instead of just being an
+  // EQ boost — the core of what a real mastering difference actually is.
+  //
+  // The crossover filters use a Linkwitz-Riley (LR4) design: two cascaded 2nd-order
+  // Butterworth filters at the same frequency. A single Butterworth lowpass+highpass
+  // pair does NOT sum back to a flat response (there's a dip right at the crossover
+  // frequency, which was quietly eating high end); LR4 sums flat with no dip.
+  function makeCrossoverStage(ctx, type, freq) {
+    const a = ctx.createBiquadFilter();
+    a.type = type; a.frequency.value = freq; a.Q.value = 0.7071;
+    const b = ctx.createBiquadFilter();
+    b.type = type; b.frequency.value = freq; b.Q.value = 0.7071;
+    a.connect(b);
+    return { input: a, output: b };
+  }
+
+  function buildMultibandStage(ctx, sourceNode, preset, intensity) {
+    const lowX = 200, highX = 3000;
+
+    // Adapt each band's makeup to how much energy THIS song already has there,
+    // relative to a typically-balanced mix — pull back where it's already full,
+    // lean in a bit where it's thin. Falls back to neutral (1x) if no analysis
+    // is available yet.
+    const adapt = analysisData ? {
+      low:  adaptiveMultiplier(analysisData.bassRatio, TYPICAL_BALANCE.bass),
+      mid:  adaptiveMultiplier(analysisData.lowMidRatio, TYPICAL_BALANCE.lowMid),
+      high: adaptiveMultiplier(analysisData.highMidRatio, TYPICAL_BALANCE.highMid),
+    } : { low: 1, mid: 1, high: 1 };
+
+    const lowpassLow = makeCrossoverStage(ctx, 'lowpass', lowX);
+
+    const highpassMidStage = makeCrossoverStage(ctx, 'highpass', lowX);
+    const lowpassMidStage = makeCrossoverStage(ctx, 'lowpass', highX);
+
+    const highpassHigh = makeCrossoverStage(ctx, 'highpass', highX);
+
+    sourceNode.connect(lowpassLow.input);
+    sourceNode.connect(highpassMidStage.input);
+    highpassMidStage.output.connect(lowpassMidStage.input);
+    sourceNode.connect(highpassHigh.input);
+
+    function bandComp(cfg, adaptMult) {
+      const c = ctx.createDynamicsCompressor();
+      c.threshold.value = cfg.thresh;
+      c.ratio.value = 1 + (cfg.ratio - 1) * intensity;
+      c.attack.value = cfg.attack;
+      c.release.value = cfg.release;
+      c.knee.value = 6;
+      const g = ctx.createGain();
+      g.gain.value = 1 + (cfg.makeup - 1) * intensity * adaptMult;
+      c.connect(g);
+      return { input: c, output: g };
+    }
+
+    const low = bandComp(preset.bands.low, adapt.low);
+    lowpassLow.output.connect(low.input);
+
+    const mid = bandComp(preset.bands.mid, adapt.mid);
+    lowpassMidStage.output.connect(mid.input);
+
+    const high = bandComp(preset.bands.high, adapt.high);
+    highpassHigh.output.connect(high.input);
+
+    const sum = ctx.createGain();
+    low.output.connect(sum);
+    mid.output.connect(sum);
+    high.output.connect(sum);
+    return sum;
+  }
+
+  // Saturation: harmonic distortion for "analog" warmth/character rather than pure loudness.
+  // Deliberately gentle drive — even at preset.saturation's max it should read as
+  // warmth, not distortion.
+  function makeSaturationCurve(amount) {
+    const n = 2048;
+    const curve = new Float32Array(n);
+    const drive = 1 + amount * 2.2;
+    const norm = Math.tanh(drive);
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * 2 - 1;
+      curve[i] = Math.tanh(drive * x) / norm;
+    }
+    return curve;
+  }
+
+  // Stereo width via Mid/Side processing (like Ozone Imager / LANDR's Stereo Field).
+  function applyStereoWidth(ctx, sourceNode, width) {
+    if (Math.abs(width - 1) < 0.02) return sourceNode;
+
+    const splitter = ctx.createChannelSplitter(2);
+    sourceNode.connect(splitter);
+
+    const mid = ctx.createGain(); mid.gain.value = 0.5;
+    splitter.connect(mid, 0); splitter.connect(mid, 1);
+
+    const sideL = ctx.createGain(); sideL.gain.value = 0.5;
+    const sideR = ctx.createGain(); sideR.gain.value = -0.5;
+    splitter.connect(sideL, 0); splitter.connect(sideR, 1);
+    const side = ctx.createGain();
+    sideL.connect(side); sideR.connect(side);
+    const sideScaled = ctx.createGain(); sideScaled.gain.value = width;
+    side.connect(sideScaled);
+
+    const outL = ctx.createGain();
+    mid.connect(outL); sideScaled.connect(outL);
+
+    const invSide = ctx.createGain(); invSide.gain.value = -1;
+    sideScaled.connect(invSide);
+    const outR = ctx.createGain();
+    mid.connect(outR); invSide.connect(outR);
+
+    const merger = ctx.createChannelMerger(2);
+    outL.connect(merger, 0, 0);
+    outR.connect(merger, 0, 1);
+    return merger;
+  }
+
+  // Exciter ("air"): isolates the top end, runs it through a slightly asymmetric
+  // saturation to generate new harmonics, then mixes that back in on top of the dry
+  // signal. This is what actually creates "presence"/"air" — a highshelf EQ boost
+  // only turns up what's already there; an exciter adds new upper harmonic content,
+  // which is what makes something sound close and alive instead of distant and dull.
+  function applyExciter(ctx, sourceNode, amount) {
+    if (amount < 0.02) return sourceNode;
+
+    const hpf = ctx.createBiquadFilter();
+    hpf.type = 'highpass';
+    hpf.frequency.value = 3500;
+    hpf.Q.value = 0.7071;
+
+    const shaper = ctx.createWaveShaper();
+    const n = 1024;
+    const curve = new Float32Array(n);
+    const drive = 2.0;
+    const bias = 0.08; // slight asymmetry -> even harmonics, more "alive" than symmetric clipping
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * 2 - 1;
+      curve[i] = Math.tanh(drive * (x + bias)) - Math.tanh(drive * bias);
+    }
+    shaper.curve = curve;
+    shaper.oversample = '4x';
+
+    const wet = ctx.createGain();
+    wet.gain.value = amount * 0.35; // parallel addition, always a minority of the signal
+
+    sourceNode.connect(hpf);
+    hpf.connect(shaper);
+    shaper.connect(wet);
+
+    const sum = ctx.createGain();
+    sourceNode.connect(sum);
+    wet.connect(sum);
+    return sum;
+  }
+
+  function buildProcessingChain(ctx, sourceNode, preset, intensity, destination, trim = 1.0) {
+    // 0) Cleanup: remove sub-rumble/DC-ish content and ultrasonic content before
+    // anything else touches the signal. Standard mastering hygiene, cheap insurance
+    // against inter-sample peaks and mud.
+    const cleanupHp = ctx.createBiquadFilter();
+    cleanupHp.type = 'highpass'; cleanupHp.frequency.value = 25; cleanupHp.Q.value = 0.7071;
+    const cleanupLp = ctx.createBiquadFilter();
+    cleanupLp.type = 'lowpass'; cleanupLp.frequency.value = 19000; cleanupLp.Q.value = 0.7071;
+    sourceNode.connect(cleanupHp);
+    cleanupHp.connect(cleanupLp);
+
+    // 1) Multiband dynamics — the real character difference between the presets
+    let node = buildMultibandStage(ctx, cleanupLp, preset, intensity);
+
+    // 2) Character EQ — just fine tonal polish now, no longer the main driver
+    preset.eq.forEach(band => {
+      const filter = ctx.createBiquadFilter();
+      filter.type = band.type;
+      filter.frequency.value = band.freq;
+      filter.Q.value = band.Q;
+      filter.gain.value = band.gain * intensity;
+      node.connect(filter);
+      node = filter;
+    });
+
+    // 3) Saturation — as a parallel blend: part dry, part saturated. That way, even
+    // at a preset's max saturation + 100% intensity, only a warming portion is
+    // audible, never a hard distortion of the whole signal.
+    const satAmount = preset.saturation * intensity;
+    if (satAmount > 0.02) {
+      const wetRatio = Math.min(0.5, satAmount * 0.7); // max. 50% wet
+      const dry = ctx.createGain(); dry.gain.value = 1 - wetRatio;
+      const wet = ctx.createGain(); wet.gain.value = wetRatio;
+      const shaper = ctx.createWaveShaper();
+      shaper.curve = makeSaturationCurve(satAmount);
+      shaper.oversample = '4x';
+      node.connect(dry);
+      node.connect(shaper);
+      shaper.connect(wet);
+      const blend = ctx.createGain();
+      dry.connect(blend);
+      wet.connect(blend);
+      node = blend;
+    }
+
+    // 3b) Exciter — real harmonic "air" on top, not just an EQ boost. This is what
+    // keeps a bright master feeling close and present instead of distant/behind glass.
+    const airAdapt = analysisData ? adaptiveMultiplier(analysisData.airRatio, TYPICAL_BALANCE.air) : 1;
+    node = applyExciter(ctx, node, preset.air * intensity * airAdapt);
+
+    // 4) Stereo width
+    const width = 1 + (preset.stereoWidth - 1) * intensity;
+    node = applyStereoWidth(ctx, node, width);
+
+    // 5) Bus compressor ("glue") — plain serial compression. (An earlier version of
+    // this ran it as a parallel dry/compressed blend for extra punch, but a
+    // compressor's gain reduction moves dynamically over time — summing that against
+    // a static dry copy creates a slowly modulating comb-filter, which is audible as
+    // a chorus/phasing-like artifact. Serial avoids that entirely.)
+    const glue = ctx.createDynamicsCompressor();
+    glue.threshold.value = preset.glue.thresh;
+    glue.ratio.value = 1 + (preset.glue.ratio - 1) * intensity;
+    glue.attack.value = preset.glue.attack;
+    glue.release.value = preset.glue.release;
+    glue.knee.value = 6;
+    node.connect(glue);
+    node = glue;
+
+    const makeupGain = ctx.createGain();
+    makeupGain.gain.value = 1 + 0.18 * intensity;
+    node.connect(makeupGain);
+    node = makeupGain;
+
+    const trimGain = ctx.createGain();
+    trimGain.gain.value = trim;
+    node.connect(trimGain);
+    node = trimGain;
+
+    // Safety headroom: leave a little air BEFORE the limiter so it doesn't have to
+    // work hard and audibly against the signal all the time (that's what causes
+    // pumping/distortion).
+    const headroom = ctx.createGain();
+    headroom.gain.value = 0.92;
+    node.connect(headroom);
+    node = headroom;
+
+    // Soft clipper: gently shave the occasional hot peak with a smooth saturation
+    // curve BEFORE the hard limiter. That means the limiter itself has to work much
+    // less, which is what keeps a loud master sounding clean instead of pumping —
+    // the same two-stage approach real mastering limiters use.
+    const softClip = ctx.createWaveShaper();
+    const scN = 1024;
+    const scCurve = new Float32Array(scN);
+    for (let i = 0; i < scN; i++) {
+      const x = (i / (scN - 1)) * 2 - 1;
+      scCurve[i] = Math.tanh(x * 1.4) / Math.tanh(1.4);
+    }
+    softClip.curve = scCurve;
+    softClip.oversample = '4x';
+    node.connect(softClip);
+    node = softClip;
+
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1.5;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.08;
+    limiter.knee.value = 4;
+    node.connect(limiter);
+    node = limiter;
+
+    node.connect(destination);
+    return node;
+  }
+
+  // ---------- Fine analysis (loudness matching after choosing a preset) ----------
+  // Proper ITU-R BS.1770-4 style gated measurement instead of a naive whole-track
+  // mean square: quiet/silent sections shouldn't drag the loudness estimate down,
+  // since that's not how Spotify/streaming LUFS normalization actually measures it.
+  function measureLufs(buffer) {
+    const ch0 = buffer.getChannelData(0);
+    const ch1 = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : ch0;
+    const sr = buffer.sampleRate;
+    const stage1 = kWeightFilter(ch0, sr);
+    const stage1R = kWeightFilter(ch1, sr);
+
+    const blockSize = Math.floor(sr * 0.4);
+    const hopSize = Math.floor(blockSize * 0.25); // 75% overlap
+    const blockPowers = [];
+    for (let i = 0; i + blockSize <= stage1.length; i += hopSize) {
+      let sumSq = 0;
+      for (let j = i; j < i + blockSize; j++) {
+        sumSq += (stage1[j] * stage1[j] + stage1R[j] * stage1R[j]) / 2;
+      }
+      blockPowers.push(sumSq / blockSize);
+    }
+    if (!blockPowers.length) return -70;
+
+    const toLufs = p => -0.691 + 10 * Math.log10(p || 1e-12);
+
+    // Absolute gate: throw out anything below -70 LUFS (near silence)
+    const absGated = blockPowers.filter(p => toLufs(p) > -70);
+    if (!absGated.length) return -70;
+
+    // Relative gate: throw out anything more than 10dB below the ungated mean
+    const ungatedMean = absGated.reduce((a, b) => a + b, 0) / absGated.length;
+    const relativeThreshold = toLufs(ungatedMean) - 10;
+    const relGated = absGated.filter(p => toLufs(p) > relativeThreshold);
+    const finalSet = relGated.length ? relGated : absGated;
+
+    const gatedMean = finalSet.reduce((a, b) => a + b, 0) / finalSet.length;
+    return toLufs(gatedMean);
+  }
+
+  async function runFineAnalysis() {
+    if (!originalBuffer || !currentPreset) return;
+    const myToken = ++fineAnalysisToken;
+
+    const offlineCtx = new OfflineAudioContext(
+      originalBuffer.numberOfChannels, originalBuffer.length, originalBuffer.sampleRate
+    );
+    const src = offlineCtx.createBufferSource();
+    src.buffer = originalBuffer;
+    buildProcessingChain(offlineCtx, src, currentPreset, currentIntensity, offlineCtx.destination, 1.0);
+    src.start(0);
+    const rendered = await offlineCtx.startRendering();
+
+    if (myToken !== fineAnalysisToken) return;
+
+    const measured = measureLufs(rendered);
+    const target = currentPreset.targetLufs;
+    const correctionDb = Math.max(-5, Math.min(5, target - measured));
+    currentTrim = Math.pow(10, correctionDb / 20);
+
+    if (isPlaying && playMode === 'mastered') restartPlayback();
+  }
+
+  // ---------- Playback ----------
+  function stopPlayback() {
+    if (playingSource) {
+      // Clear onended BEFORE stopping: otherwise the old callback fires
+      // asynchronously after a new source has already started (e.g. on an A/B
+      // switch) and incorrectly resets isPlaying to false while playback continues.
+      playingSource.onended = null;
+      try { playingSource.stop(); } catch(e) {}
+      playingSource.disconnect();
+      playingSource = null;
+    }
+    isPlaying = false;
+    playBtn.textContent = '▶ Play';
+  }
+
+  function startPlayback(offset = 0) {
+    if (!originalBuffer) return;
+    stopPlayback();
+
+    const src = audioCtx.createBufferSource();
+    src.buffer = originalBuffer;
+
+    if (playMode === 'mastered' && currentPreset) {
+      buildProcessingChain(audioCtx, src, currentPreset, currentIntensity, audioCtx.destination, currentTrim);
+    } else {
+      src.connect(audioCtx.destination);
+    }
+
+    src.start(0, offset);
+    playStartedAt = audioCtx.currentTime - offset;
+    playingSource = src;
+    isPlaying = true;
+    playBtn.textContent = '⏸ Stop';
+
+    src.onended = () => {
+      if (isPlaying) { isPlaying = false; playBtn.textContent = '▶ Play'; }
+    };
+  }
+
+  function restartPlayback() {
+    if (!isPlaying) return;
+    const offset = audioCtx.currentTime - playStartedAt;
+    startPlayback(offset % originalBuffer.duration);
+  }
+
+  playBtn.addEventListener('click', () => {
+    if (!originalBuffer) return;
+    if (isPlaying) {
+      stopPlayback();
+    } else {
+      startPlayback(0);
+    }
+  });
+
+  btnOrig.addEventListener('click', () => {
+    playMode = 'orig';
+    btnOrig.classList.add('active');
+    btnMastered.classList.remove('active');
+    if (isPlaying) restartPlayback();
+  });
+  btnMastered.addEventListener('click', () => {
+    if (!currentPreset) return;
+    playMode = 'mastered';
+    btnMastered.classList.add('active');
+    btnOrig.classList.remove('active');
+    if (isPlaying) restartPlayback();
+  });
+
+  setInterval(() => {
+    if (isPlaying && originalBuffer) {
+      const t = (audioCtx.currentTime - playStartedAt) % originalBuffer.duration;
+      playTime.textContent = formatTime(t) + ' / ' + formatTime(originalBuffer.duration);
+    }
+  }, 200);
+
+  function formatTime(s) {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return m + ':' + sec.toString().padStart(2, '0');
+  }
+
+  // ---------- Offline Export ----------
+  exportBtn.addEventListener('click', async () => {
+    if (!originalBuffer || !currentPreset) return;
+    exportBtn.disabled = true;
+    exportProgress.style.display = 'block';
+    exportProgress.value = 10;
+
+    const offlineCtx = new OfflineAudioContext(
+      originalBuffer.numberOfChannels,
+      originalBuffer.length,
+      originalBuffer.sampleRate
+    );
+    const src = offlineCtx.createBufferSource();
+    src.buffer = originalBuffer;
+    buildProcessingChain(offlineCtx, src, currentPreset, currentIntensity, offlineCtx.destination, currentTrim);
+    src.start(0);
+
+    exportProgress.value = 40;
+    const rendered = await offlineCtx.startRendering();
+    exportProgress.value = 80;
+
+    const wavBlob = bufferToWav(rendered);
+    exportProgress.value = 100;
+
+    const url = URL.createObjectURL(wavBlob);
+    const a = document.createElement('a');
+    const baseName = fname.textContent.replace(/\.[^/.]+$/, '');
+    a.href = url;
+    a.download = `${baseName}_${currentPreset.name}.wav`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    setTimeout(() => {
+      exportBtn.disabled = false;
+      exportProgress.style.display = 'none';
+      exportProgress.value = 0;
+    }, 600);
+  });
+
+  function bufferToWav(buffer) {
+    const numChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const numFrames = buffer.length;
+    const bytesPerSample = 2;
+    const blockAlign = numChannels * bytesPerSample;
+    const dataSize = numFrames * blockAlign;
+    const bufferSize = 44 + dataSize;
+
+    const arrBuf = new ArrayBuffer(bufferSize);
+    const view = new DataView(arrBuf);
+
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    const channels = [];
+    for (let c = 0; c < numChannels; c++) channels.push(buffer.getChannelData(c));
+
+    let offset = 44;
+    for (let i = 0; i < numFrames; i++) {
+      for (let c = 0; c < numChannels; c++) {
+        let sample = Math.max(-1, Math.min(1, channels[c][i]));
+        sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+        view.setInt16(offset, sample, true);
+        offset += 2;
+      }
+    }
+    return new Blob([arrBuf], { type: 'audio/wav' });
+  }
+
+  function writeString(view, offset, str) {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+
+})();
+</script>
+</body>
+</html>
