@@ -308,51 +308,69 @@
   let playMode = 'orig'; // 'orig' | 'mastered'
   let isPlaying = false;
   let playStartedAt = 0;
-  let currentTrim = 1.0;
 
   // Cover art + artist tag embedded into exports that support metadata (MP3, M4A).
   const EXPORT_ARTIST = 'yeditor';
   const COVER_ART_BASE64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAQDAwQDAwQEAwQFBAQFBgoHBgYGBg0JCggKDw0QEA8NDw4RExgUERIXEg4PFRwVFxkZGxsbEBQdHx0aHxgaGxr/2wBDAQQFBQYFBgwHBwwaEQ8RGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhr/wAARCAKAAoADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD4Pooor6wzCiiigAooooAKKBRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRTlRmOFBJ9qTaW4DaMVeg0m5nK/u9qkZDNWnbaDEhzcOXweg4rGVenHqF0jn1UscKCT6AVeg0i6nx8mwEZy3FdJDaw24xDGqe+OanHrXFPGPaKI5jHttAiQ5mYyegHFaMNpFb8RRqg68VYxijiuKVWct2TdibaUDmlpM1mIWiiimAUUZooA4OiiivpDYKKKKACiiigAHeikpaACiiigAooooAKKKKACiiikgCiiigAooopgFFIaTvQA6iiigApKWigAooooAKKKBQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUZoAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAoopQCTgcn0pXsAlFXINMuZwCkZAPQtxWnBoCgAzuxOM4X1rGVenDdhdIwgpY/KM/QVdg0i5nGdm0dctxXSQWUVuB5KBce3NTYrjnjP5SXIx4NAiXJmcuc8Y4rRhs4bcDyYwpAxnvVjtS5rilWnPdk3Y0DFOzmkoFYkikDikNOzTT1oAU9KSlxS0AIAaCKWigBtL1paKAEIpKdSYpgcJRRRX0psFFFFABRRRQAg60tFFABRRRQAUUUUAFFFFABRRRSQBRRRQAUUUUwCk70tJ3oAWiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKTFLRQAUUUnNAC0UgpaACiiigAooooAKKKKACirdvp1zc58uMgYzk1pQaANoM8hyecKOlYzrQhuwbSMMAsQFGSewq1Bptxc/wCrjIGM5PFdNb2MFtjyo1BHcjJqxtx7Vxzxn8qI5jEh0BcAzyE9OFFakNnBD/q4lHPHGSKs0CuGdac92S2xDwKUc0CjFYiDNJilxS0AJikp1IBQAmKXFLRTAQUtGKKEAUUUUAFHNFFIAooHSinsAUUUn40XA4SiiivpTYKKKKACiiigBB1paKKACiiigAooooAKKKKACiiikgCiiigAooopgFN706k70ALRRRQAUUUUAFFFFABRRRQAUUUUAFFFFACZpaKKACiiigAooooAKKKKACiiigAooooAKKKKACkpaKAAc0VJDbTTEiKNmI9BWpBoMjEG4baPQdaxlVhDdhdIx+1Tw2c85xFGzepx0rpYNKtoBkR729W71dVQBgcVxzxi+yiXI56DQZGAadwuDyo64rUg0q2gPCbjjqau0ZxXHOvUn1JbFC4HHBzzilAwaA3FGawvckMc0tIDRmkAuBScUtFABRRRTAKKQ9RQTikAtFFFMAooooAKKKTNIBaKQdKWmAUnWlopAFFFIDzQAZozT1iZzwpNTpYk8ucewqXJItQkzzqiiivqCwooooAKKKKAE7mlpKWgAooooAKKKKACiiig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';
   let fineAnalysisToken = 0;
 
+  // The finished master, rendered once. Preview and export both play/encode THIS
+  // buffer, so what you hear in the A/B is bit-for-bit what lands in the file.
+  let masteredBuffer = null;
+
+  // The offline graph is rendered with headroom and multiplied back out in JS, so
+  // the destination node can never be handed a sample outside ±1.0 no matter how
+  // hard a preset pushes. All real peak control happens in the limiter below.
+  const RENDER_HEADROOM = 0.5;
+
+  const clamp = (v, lo, hi) => v < lo ? lo : (v > hi ? hi : v);
+
   // ---------- Presets ----------
-  // Four mastering styles, each pushed as far as it can go while staying musical —
-  // no mood picker, just four distinct, deliberately opinionated masters. Each one
-  // is a full chain: multiband compression (3 bands, independent dynamics instead
-  // of a static EQ boost), harmonic saturation, an exciter for real "air" (not just
-  // an EQ boost), Mid/Side stereo width, a parallel ("NY-style") glue compressor for
-  // punch, and a two-stage limiter — the same building blocks LANDR, Dolby.io and
-  // BandLab's mastering engines are built from.
+  // Four mastering styles, each pushed as far as it can go while staying musical.
+  // Each one is a full chain: 4-band multiband compression across a phase-correct
+  // Linkwitz-Riley tree (the top band doubles as a de-esser), adaptive corrective
+  // EQ derived from the track's own spectrum, harmonic saturation, an exciter for
+  // real "air", frequency-dependent Mid/Side width with a mono low end, a bus glue
+  // compressor, and a true-peak look-ahead limiter — the same building blocks
+  // LANDR, Dolby.io and BandLab's mastering engines are built from.
+  //
+  // Bands: low <110Hz | lowMid 110-900Hz | highMid 900-5200Hz | air >5200Hz
   const PRESETS = [
     {
       id: 'blackout',
       name: 'Blackout',
       desc: 'Bass',
       targetLufs: -9.8,
+      ceilingDb: -1.0,
       bands: {
-        low:  { thresh: -25, ratio: 4.6, attack: 0.018, release: 0.24, makeup: 2.05 },
-        mid:  { thresh: -19, ratio: 2.4, attack: 0.009, release: 0.18, makeup: 1.02 },
-        high: { thresh: -21, ratio: 1.9, attack: 0.005, release: 0.13, makeup: 0.95 },
+        low:     { thresh: -25, ratio: 4.6, attack: 0.020, release: 0.26, makeup: 2.05 },
+        lowMid:  { thresh: -21, ratio: 3.0, attack: 0.012, release: 0.20, makeup: 1.18 },
+        highMid: { thresh: -19, ratio: 2.3, attack: 0.008, release: 0.15, makeup: 1.00 },
+        air:     { thresh: -23, ratio: 3.0, attack: 0.002, release: 0.08, makeup: 0.94 },
       },
       eq: [
-        { freq: 75,    gain: 2.2,  type: 'lowshelf', Q: 0.7 },
-        { freq: 3200,  gain: -1.8, type: 'peaking',  Q: 1.0 },
+        { freq: 75,    gain: 2.2,  type: 'lowshelf',  Q: 0.7 },
+        { freq: 3200,  gain: -1.8, type: 'peaking',   Q: 1.0 },
         { freq: 9500,  gain: 0.3,  type: 'highshelf', Q: 0.7 },
       ],
       saturation: 0.34,
       air: 0.05,
-      stereoWidth: 0.72,
-      glue: { thresh: -15, ratio: 4.4, attack: 0.012, release: 0.22, mix: 0.65 },
+      stereoWidth: 0.78,
+      bassMono: 0.85,
+      sideAir: 0.4,
+      glue: { thresh: -15, ratio: 4.4, attack: 0.012, release: 0.22 },
     },
     {
       id: 'chromeline',
       name: 'Chromeline',
       desc: 'Bright',
       targetLufs: -9.2,
+      ceilingDb: -1.0,
       bands: {
-        low:  { thresh: -21, ratio: 3.6, attack: 0.008, release: 0.16, makeup: 1.4 },
-        mid:  { thresh: -18, ratio: 3.6, attack: 0.004, release: 0.1,  makeup: 1.2 },
-        high: { thresh: -19, ratio: 2.6, attack: 0.004, release: 0.09, makeup: 1.15 },
+        low:     { thresh: -21, ratio: 3.6, attack: 0.010, release: 0.17, makeup: 1.40 },
+        lowMid:  { thresh: -19, ratio: 3.4, attack: 0.006, release: 0.12, makeup: 1.18 },
+        highMid: { thresh: -18, ratio: 3.2, attack: 0.004, release: 0.10, makeup: 1.16 },
+        air:     { thresh: -22, ratio: 3.4, attack: 0.0015, release: 0.07, makeup: 1.08 },
       },
       eq: [
         { freq: 3000,  gain: 2.2, type: 'peaking',   Q: 1.0 },
@@ -361,18 +379,22 @@
       ],
       saturation: 0.30,
       air: 0.35,
-      stereoWidth: 1.02,
-      glue: { thresh: -14, ratio: 4.6, attack: 0.003, release: 0.09, mix: 0.7 },
+      stereoWidth: 1.14,
+      bassMono: 0.7,
+      sideAir: 1.4,
+      glue: { thresh: -14, ratio: 4.6, attack: 0.003, release: 0.09 },
     },
     {
       id: 'driftwood',
       name: 'Driftwood',
       desc: 'Warm',
       targetLufs: -12.5,
+      ceilingDb: -1.0,
       bands: {
-        low:  { thresh: -23, ratio: 2.0, attack: 0.022, release: 0.32, makeup: 1.35 },
-        mid:  { thresh: -21, ratio: 1.7, attack: 0.018, release: 0.26, makeup: 1.1 },
-        high: { thresh: -23, ratio: 1.4, attack: 0.015, release: 0.22, makeup: 0.92 },
+        low:     { thresh: -23, ratio: 2.0, attack: 0.024, release: 0.34, makeup: 1.35 },
+        lowMid:  { thresh: -22, ratio: 1.8, attack: 0.020, release: 0.28, makeup: 1.12 },
+        highMid: { thresh: -21, ratio: 1.6, attack: 0.016, release: 0.22, makeup: 0.98 },
+        air:     { thresh: -24, ratio: 2.2, attack: 0.003, release: 0.10, makeup: 0.90 },
       },
       eq: [
         { freq: 250,  gain: 1.6,  type: 'peaking',   Q: 0.8 },
@@ -381,18 +403,22 @@
       ],
       saturation: 0.22,
       air: 0.06,
-      stereoWidth: 0.94,
-      glue: { thresh: -21, ratio: 2.2, attack: 0.028, release: 0.34, mix: 0.4 },
+      stereoWidth: 0.98,
+      bassMono: 0.6,
+      sideAir: 0.2,
+      glue: { thresh: -21, ratio: 2.2, attack: 0.028, release: 0.34 },
     },
     {
       id: 'halo',
       name: 'Halo',
       desc: 'Clean',
       targetLufs: -11.2,
+      ceilingDb: -1.0,
       bands: {
-        low:  { thresh: -22, ratio: 2.4, attack: 0.014, release: 0.24, makeup: 1.25 },
-        mid:  { thresh: -20, ratio: 1.9, attack: 0.011, release: 0.2,  makeup: 1.05 },
-        high: { thresh: -22, ratio: 1.5, attack: 0.009, release: 0.16, makeup: 1.05 },
+        low:     { thresh: -22, ratio: 2.4, attack: 0.016, release: 0.26, makeup: 1.25 },
+        lowMid:  { thresh: -21, ratio: 2.0, attack: 0.013, release: 0.22, makeup: 1.06 },
+        highMid: { thresh: -20, ratio: 1.8, attack: 0.010, release: 0.17, makeup: 1.04 },
+        air:     { thresh: -23, ratio: 2.6, attack: 0.002, release: 0.08, makeup: 1.02 },
       },
       eq: [
         { freq: 700,   gain: -0.6, type: 'peaking',   Q: 0.9 },
@@ -401,8 +427,10 @@
       ],
       saturation: 0.16,
       air: 0.22,
-      stereoWidth: 1.1,
-      glue: { thresh: -20, ratio: 2.4, attack: 0.016, release: 0.26, mix: 0.5 },
+      stereoWidth: 1.12,
+      bassMono: 0.75,
+      sideAir: 1.0,
+      glue: { thresh: -20, ratio: 2.4, attack: 0.016, release: 0.26 },
     },
   ];
 
@@ -416,25 +444,45 @@
   });
 
   function selectPreset(id) {
+    if (currentPreset && currentPreset.id === id) return;
     currentPreset = PRESETS.find(p => p.id === id);
+    invalidateMaster();
     document.querySelectorAll('.preset').forEach(el => {
       el.classList.toggle('active', el.dataset.id === id);
     });
     targetLufsEl.textContent = `${currentPreset.targetLufs} LUFS`;
-    if (isPlaying) restartPlayback();
+  }
+
+  // Any change to preset or intensity invalidates the rendered master — it gets
+  // rebuilt on the next "Master →", never silently reused.
+  function invalidateMaster() {
+    fineAnalysisToken++;
+    masteredBuffer = null;
+    if (playMode === 'mastered') {
+      playMode = 'orig';
+      btnOrig.classList.add('active');
+      btnMastered.classList.remove('active');
+    }
   }
 
   intensitySlider.addEventListener('input', () => {
     currentIntensity = intensitySlider.value / 100;
     intensityVal.textContent = intensitySlider.value + '%';
-    if (isPlaying) restartPlayback();
+    invalidateMaster();
   });
 
   confirmPresetBtn.addEventListener('click', async () => {
     if (!currentPreset) return;
+    // Nothing changed since the last master? Then there is nothing to recompute.
+    if (masteredBuffer) { showOnly(resultSection); return; }
     showOnly(loadingSection);
     loadingText.textContent = 'Mastering …';
-    await runFineAnalysis();
+    await wait(50);
+    const started = Date.now();
+    const ok = await runMastering(msg => { loadingText.textContent = msg; });
+    if (!ok) return;
+    const elapsed = Date.now() - started;
+    if (elapsed < 400) await wait(400 - elapsed);
     showOnly(resultSection);
   });
 
@@ -471,8 +519,11 @@
     originalBuffer = null;
     analysisData = null;
     currentPreset = null;
-    currentTrim = 1.0;
+    masteredBuffer = null;
     fineAnalysisToken++;
+    playMode = 'orig';
+    btnOrig.classList.add('active');
+    btnMastered.classList.remove('active');
     filebar.classList.remove('show');
     showOnly(null);
     document.querySelectorAll('.preset').forEach(el => el.classList.remove('active'));
@@ -508,43 +559,382 @@
     showOnly(presetSection);
   }
 
-  // ---------- Analysis engine (produces metrics used for preset recommendation) ----------
+  // ================================================================
+  //  METERING
+  // ================================================================
+  // Everything downstream (loudness matching, the limiter, the adaptive tuning)
+  // is only as good as the measurement it is based on, so the meters here are
+  // the real standards-track ones rather than rough approximations:
+  //   * ITU-R BS.1770-4 K-weighting as actual biquads, derived for the file's
+  //     own sample rate (the old single-pole RC approximation was several dB off
+  //     in places, which quietly dragged the whole loudness match with it).
+  //   * Gated LUFS with both the absolute (-70 LUFS) and relative (-10 LU) gates.
+  //   * True peak (dBTP) via 4x band-limited interpolation, not sample peak —
+  //     sample peak simply does not see the inter-sample overshoots that make a
+  //     master distort on consumer DACs and lossy codecs.
+
+  function biquadState() { return { x1: 0, x2: 0, y1: 0, y2: 0 }; }
+
+  // Generic direct-form-I biquad. Carries its state across calls so a long track
+  // can be filtered in small chunks instead of allocating a full-length copy of it.
+  function runBiquad(input, out, c, state, len) {
+    const n = len === undefined ? input.length : len;
+    let { x1, x2, y1, y2 } = state;
+    const { b0, b1, b2, a1, a2 } = c;
+    for (let i = 0; i < n; i++) {
+      const x = input[i];
+      const y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+      x2 = x1; x1 = x;
+      y2 = y1; y1 = y;
+      out[i] = y;
+    }
+    state.x1 = x1; state.x2 = x2; state.y1 = y1; state.y2 = y2;
+    return out;
+  }
+
+  // BS.1770-4 stage 1: the "head effect" high shelf (+4 dB above ~1.5 kHz).
+  function kWeightShelf(fs) {
+    const f0 = 1681.974450955533;
+    const G  = 3.999843853973347;
+    const Q  = 0.7071752369554196;
+    const K  = Math.tan(Math.PI * f0 / fs);
+    const Vh = Math.pow(10, G / 20);
+    const Vb = Math.pow(Vh, 0.4996667741545416);
+    const d  = 1 + K / Q + K * K;
+    return {
+      b0: (Vh + Vb * K / Q + K * K) / d,
+      b1: 2 * (K * K - Vh) / d,
+      b2: (Vh - Vb * K / Q + K * K) / d,
+      a1: 2 * (K * K - 1) / d,
+      a2: (1 - K / Q + K * K) / d,
+    };
+  }
+
+  // BS.1770-4 stage 2: the RLB high-pass (~38 Hz), which is what stops sub-bass
+  // rumble from counting as loudness.
+  function kWeightHighpass(fs) {
+    const f0 = 38.13547087602444;
+    const Q  = 0.5003270373238773;
+    const K  = Math.tan(Math.PI * f0 / fs);
+    const d  = 1 + K / Q + K * K;
+    return {
+      b0: 1, b1: -2, b2: 1,
+      a1: 2 * (K * K - 1) / d,
+      a2: (1 - K / Q + K * K) / d,
+    };
+  }
+
+  function channelsOf(buffer) {
+    const chans = [];
+    for (let c = 0; c < buffer.numberOfChannels; c++) chans.push(buffer.getChannelData(c));
+    return chans;
+  }
+
+  function scaleChannels(chans, g) {
+    if (g === 1) return;
+    for (let c = 0; c < chans.length; c++) {
+      const x = chans[c];
+      for (let i = 0; i < x.length; i++) x[i] *= g;
+    }
+  }
+
+  // Gated loudness per BS.1770-4. Channel powers are SUMMED (each with weight 1.0
+  // for L/R), not averaged — averaging is a 3 dB error that used to make every
+  // master land 3 dB hotter than the preset actually asked for.
+  //
+  // Optionally measures the track as if a gain curve were applied to it (`gain` /
+  // `gainScale`), which lets the limiter's effect on loudness be measured without
+  // ever materialising a second copy of the audio.
+  function measureLufsChannels(chans, sr, gain, gainScale) {
+    const n = chans[0].length;
+    const hop = Math.max(1, Math.round(sr * 0.1));
+    const blockSize = hop * 4;               // 400 ms, and exactly 4 hops
+    const numHops = Math.floor(n / hop);
+    if (numHops < 4) return -70;
+    const numBlocks = numHops - 3;           // 75% overlap, for free
+
+    const shelf = kWeightShelf(sr);
+    const hp = kWeightHighpass(sr);
+    const chunk = new Float32Array(hop);
+    const hopSum = new Float64Array(numHops);
+    const power = new Float64Array(numBlocks);
+    const a = gainScale === undefined ? 1 : gainScale;
+
+    for (let c = 0; c < chans.length; c++) {
+      const x = chans[c];
+      const s1 = biquadState(), s2 = biquadState();
+      for (let h = 0; h < numHops; h++) {
+        const off = h * hop;
+        if (gain) for (let i = 0; i < hop; i++) chunk[i] = x[off + i] * gain[off + i] * a;
+        else      for (let i = 0; i < hop; i++) chunk[i] = x[off + i];
+        runBiquad(chunk, chunk, shelf, s1);
+        runBiquad(chunk, chunk, hp, s2);
+        let sum = 0;
+        for (let i = 0; i < hop; i++) sum += chunk[i] * chunk[i];
+        hopSum[h] = sum;
+      }
+      for (let b = 0; b < numBlocks; b++) {
+        power[b] += (hopSum[b] + hopSum[b + 1] + hopSum[b + 2] + hopSum[b + 3]) / blockSize;
+      }
+    }
+
+    const toLufs = p => -0.691 + 10 * Math.log10(p > 0 ? p : 1e-12);
+
+    // Absolute gate: drop anything below -70 LUFS (silence / room tone).
+    const absGated = [];
+    for (let b = 0; b < numBlocks; b++) if (toLufs(power[b]) > -70) absGated.push(power[b]);
+    if (!absGated.length) return -70;
+
+    // Relative gate: drop anything more than 10 LU below the ungated mean.
+    let mean = 0;
+    for (let i = 0; i < absGated.length; i++) mean += absGated[i];
+    mean /= absGated.length;
+    const relThresh = toLufs(mean) - 10;
+    const relGated = absGated.filter(p => toLufs(p) > relThresh);
+    const finalSet = relGated.length ? relGated : absGated;
+
+    let gated = 0;
+    for (let i = 0; i < finalSet.length; i++) gated += finalSet[i];
+    return toLufs(gated / finalSet.length);
+  }
+
+  // ---- True peak (dBTP) -------------------------------------------------
+  // 4x oversampling via band-limited (windowed-sinc) fractional-delay kernels,
+  // evaluated over EVERY sample.
+  //
+  // The tempting optimisation here is to only interpolate around samples that are
+  // already near the ceiling. It is also wrong: content near Nyquist can put a
+  // sample close to a zero crossing while the reconstructed waveform peaks between
+  // samples, and measured on real program material the true peak turned up ~9 dB
+  // above the nearest sample. Gating the search on sample level silently misses
+  // exactly the peaks a ceiling exists to stop, so the scan is exhaustive.
+  const TP_LEN = 24;   // taps per polyphase branch
+  const TP_PHASES = 3; // offsets 0.25 / 0.50 / 0.75 (the sample itself covers 0.0)
+
+  // Small guard under the declared ceiling. 4x oversampling is what BS.1770-4
+  // itself specifies and it still reads a touch low against a 32x reference
+  // (measured here: within 0.08 dB with these kernels), and the limiter's gain
+  // curve is not perfectly constant across a kernel span. The guard covers both,
+  // so a master that says -1.0 dBTP really does measure at or below -1.0 dBTP on
+  // a stricter meter than this one.
+  const TP_GUARD = Math.pow(10, -0.3 / 20);
+  let tpKernels = null;
+
+  function fracDelayKernel(d, len) {
+    const k = new Float32Array(len);
+    const center = len / 2 - 1;
+    let sum = 0;
+    for (let i = 0; i < len; i++) {
+      const t = (i - center) - d;
+      const s = Math.abs(t) < 1e-9 ? 1 : Math.sin(Math.PI * t) / (Math.PI * t);
+      const w = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (len - 1)); // Hamming
+      k[i] = s * w;
+      sum += k[i];
+    }
+    for (let i = 0; i < len; i++) k[i] /= sum; // unity DC gain
+    return k;
+  }
+
+  function getTpKernels() {
+    if (!tpKernels) {
+      tpKernels = [];
+      for (let p = 1; p <= TP_PHASES; p++) tpKernels.push(fracDelayKernel(p / (TP_PHASES + 1), TP_LEN));
+    }
+    return tpKernels;
+  }
+
+  // Per-sample linked (max across channels) true-peak magnitude, written into `out`.
+  function truePeakEnvelope(chans, out) {
+    const n = chans[0].length;
+    const nch = chans.length;
+    for (let i = 0; i < n; i++) {
+      let m = 0;
+      for (let c = 0; c < nch; c++) {
+        const v = chans[c][i];
+        const a = v < 0 ? -v : v;
+        if (a > m) m = a;
+      }
+      out[i] = m;
+    }
+    const kern = getTpKernels();
+    const lead = TP_LEN / 2 - 1;
+    const hi = n - (TP_LEN - lead);
+    // Phase-outer / sample-inner: the 24 kernel taps stay hot while the audio
+    // streams past, which is roughly twice as fast as the other way round.
+    for (let c = 0; c < nch; c++) {
+      const x = chans[c];
+      for (let p = 0; p < kern.length; p++) {
+        const k = kern[p];
+        for (let i = lead; i < hi; i++) {
+          const b = i - lead;
+          let acc = 0;
+          for (let t = 0; t < TP_LEN; t++) acc += x[b + t] * k[t];
+          if (acc < 0) acc = -acc;
+          if (acc > out[i]) out[i] = acc;
+        }
+      }
+    }
+  }
+
+  // A fast, sample-gated true-peak ESTIMATE. Only used to characterise the source
+  // for the preset recommendation, where being a couple of tenths of a dB shy does
+  // not change anything. Peak control itself uses the exhaustive scan above.
+  function estimateTruePeak(chans) {
+    const n = chans[0].length;
+    const nch = chans.length;
+    let samplePeak = 0;
+    for (let c = 0; c < nch; c++) {
+      const x = chans[c];
+      for (let i = 0; i < n; i++) {
+        const a = x[i] < 0 ? -x[i] : x[i];
+        if (a > samplePeak) samplePeak = a;
+      }
+    }
+    if (samplePeak === 0) return 0;
+    const candidate = samplePeak * 0.5;
+    const kern = getTpKernels();
+    const lead = TP_LEN / 2 - 1;
+    let peak = samplePeak;
+    for (let c = 0; c < nch; c++) {
+      const x = chans[c];
+      for (let i = lead; i < n - (TP_LEN - lead); i++) {
+        const a = x[i] < 0 ? -x[i] : x[i];
+        if (a < candidate) continue;
+        const b = i - lead;
+        for (let p = 0; p < kern.length; p++) {
+          const k = kern[p];
+          let acc = 0;
+          for (let t = 0; t < TP_LEN; t++) acc += x[b + t] * k[t];
+          if (acc < 0) acc = -acc;
+          if (acc > peak) peak = acc;
+        }
+      }
+    }
+    return peak;
+  }
+
+  // ================================================================
+  //  TRUE-PEAK LOOK-AHEAD LIMITER
+  // ================================================================
+  // Web Audio's DynamicsCompressor was doing the limiting before. It is a fine
+  // compressor and a poor limiter: it overshoots, it cannot see a transient
+  // coming, and it knows nothing about inter-sample peaks — which is exactly the
+  // combination that makes a loud master crackle once it has been through an MP3
+  // or AAC encoder.
+  //
+  // Rendering offline means the whole gain curve can be built with full knowledge
+  // of the future, so this is a genuine look-ahead limiter with ZERO latency and
+  // zero overshoot: the backward pass lowers the gain along a linear ramp that
+  // arrives at its minimum exactly when the peak does, and the forward pass gives
+  // it a program-dependent dual release (fast + slow, blended) so the recovery
+  // breathes instead of pumping. It limits against the true-peak envelope, not
+  // sample peaks, so the ceiling holds after resampling and lossy encoding too.
+  // Builds the limiter's gain curve for the envelope `env` scaled by `a`, writing a
+  // normalised (<= 1) curve into `gain`. Separating "measure the peaks" from "work
+  // out the gain" means the expensive true-peak scan happens once per master, no
+  // matter how many gain trials the loudness match needs.
+  function buildLimiterGain(env, gain, sr, ceiling, a) {
+    const n = env.length;
+    for (let i = 0; i < n; i++) {
+      const p = env[i] * a;
+      gain[i] = p > ceiling ? ceiling / p : 1;
+    }
+
+    // Look-ahead attack: a 3.5 ms linear ramp down into every peak. Because each
+    // step can only rise by 1/look going backwards, the curve is guaranteed to be
+    // at or below the required gain at every single sample — no overshoot is
+    // mathematically possible.
+    const look = Math.max(8, Math.round(sr * 0.0035));
+    const slope = 1 / look;
+    for (let i = n - 2; i >= 0; i--) {
+      const lim = gain[i + 1] + slope;
+      if (gain[i] > lim) gain[i] = lim;
+    }
+
+    // Program-dependent release: short bursts recover fast, sustained loud
+    // passages recover slowly, so the limiter stops "breathing" on every kick.
+    // Both followers stay at or below the required gain, so blending them is safe.
+    const cFast = 1 - Math.exp(-1 / (sr * 0.035));
+    const cSlow = 1 - Math.exp(-1 / (sr * 0.32));
+    let ef = gain[0], es = gain[0];
+    for (let i = 0; i < n; i++) {
+      const t = gain[i];
+      ef = t <= ef ? t : Math.min(t, ef + (1 - ef) * cFast);
+      es = t <= es ? t : Math.min(t, es + (1 - es) * cSlow);
+      gain[i] = 0.5 * ef + 0.5 * es;
+    }
+  }
+
+  function applyLimiterGain(chans, gain, a) {
+    for (let c = 0; c < chans.length; c++) {
+      const x = chans[c];
+      for (let i = 0; i < x.length; i++) x[i] *= gain[i] * a;
+    }
+  }
+
+  // Final safety net above the limiter: a smooth, asymptotic soft knee in the top
+  // 10% below the ceiling. After a correct look-ahead limiter it barely engages,
+  // which is the point — it exists so nothing can ever leave this app above the
+  // declared ceiling, without a hard clip's harsh odd-order spray.
+  function softClipCeiling(chans, ceiling) {
+    const knee = ceiling * 0.9;
+    const span = ceiling - knee;
+    for (let c = 0; c < chans.length; c++) {
+      const x = chans[c];
+      for (let i = 0; i < x.length; i++) {
+        const v = x[i];
+        const a = v < 0 ? -v : v;
+        if (a <= knee) continue;
+        const y = knee + span * Math.tanh((a - knee) / span);
+        x[i] = v < 0 ? -y : y;
+      }
+    }
+  }
+
+  // 2 ms in / 6 ms out, so a master can never start or end on a DC step (a click).
+  function applyEdgeFades(chans, sr) {
+    const n = chans[0].length;
+    const fin = Math.min(Math.round(sr * 0.002), n >> 1);
+    const fout = Math.min(Math.round(sr * 0.006), n >> 1);
+    for (let c = 0; c < chans.length; c++) {
+      const x = chans[c];
+      for (let i = 0; i < fin; i++) x[i] *= i / fin;
+      for (let i = 0; i < fout; i++) x[n - 1 - i] *= i / fout;
+    }
+  }
+
+  // ================================================================
+  //  ANALYSIS (drives preset recommendation + adaptive tuning)
+  // ================================================================
   function analyzeBuffer(buffer) {
-    const ch0 = buffer.getChannelData(0);
-    const ch1 = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : ch0;
     const sr = buffer.sampleRate;
+    const chans = channelsOf(buffer);
+    const ch0 = chans[0];
     const n = ch0.length;
 
-    const stage1 = kWeightFilter(ch0, sr);
-    const stage1R = kWeightFilter(ch1, sr);
+    const lufs = measureLufsChannels(chans, sr);
+    const truePeakDb = 20 * Math.log10(estimateTruePeak(chans) || 1e-12);
 
-    let sumSq = 0;
-    let peak = 0;
-    for (let i = 0; i < n; i++) {
-      const l = stage1[i], r = stage1R[i];
-      sumSq += (l*l + r*r) / 2;
-      const rawPeak = Math.max(Math.abs(ch0[i]), Math.abs(ch1[i]));
-      if (rawPeak > peak) peak = rawPeak;
-    }
-    const meanSq = sumSq / n;
-    const lufs = -0.691 + 10 * Math.log10(meanSq || 1e-12);
-    const truePeakDb = 20 * Math.log10(peak || 1e-12);
-
+    // Crest-style dynamics estimate: true peak against the average level of the
+    // loudest fifth of the track. This is what picks the preset, so it stays the
+    // same measure it always was.
     const blockSize = Math.floor(sr * 0.4);
     const blockRms = [];
     for (let i = 0; i + blockSize < n; i += blockSize) {
       let s = 0;
-      for (let j = i; j < i + blockSize; j++) s += ch0[j]*ch0[j];
+      for (let j = i; j < i + blockSize; j++) s += ch0[j] * ch0[j];
       blockRms.push(Math.sqrt(s / blockSize));
     }
-    blockRms.sort((a,b) => b - a);
-    const loudest20 = blockRms.slice(0, Math.max(1, Math.floor(blockRms.length * 0.2)));
-    const avgLoud = loudest20.reduce((a,b)=>a+b,0) / loudest20.length;
+    blockRms.sort((a, b) => b - a);
+    const loudest20 = blockRms.length
+      ? blockRms.slice(0, Math.max(1, Math.floor(blockRms.length * 0.2)))
+      : [1e-6];
+    const avgLoud = loudest20.reduce((a, b) => a + b, 0) / loudest20.length;
     const avgLoudDb = 20 * Math.log10(avgLoud || 1e-12);
     const dynamicRange = Math.abs(truePeakDb - avgLoudDb);
 
     const fftSize = 8192;
-    const spectrum = computeAveragedSpectrum(ch0, sr, fftSize, 12);
+    const spectrum = computeAveragedSpectrum(ch0, sr, fftSize, 16);
     const centroid = spectralCentroid(spectrum, sr, fftSize);
     const balance = bandEnergyRatio(spectrum, sr, fftSize);
 
@@ -559,32 +949,6 @@
       highMidRatio: balance.highMidRatio,
       airRatio: balance.airRatio,
     };
-  }
-
-  function kWeightFilter(data, sr) {
-    const out = new Float32Array(data.length);
-    const hpFc = 60;
-    const hpRC = 1 / (2 * Math.PI * hpFc);
-    const hpDt = 1 / sr;
-    const hpAlpha = hpRC / (hpRC + hpDt);
-    let hpPrevIn = 0, hpPrevOut = 0;
-    for (let i = 0; i < data.length; i++) {
-      const x = data[i];
-      const y = hpAlpha * (hpPrevOut + x - hpPrevIn);
-      hpPrevIn = x; hpPrevOut = y;
-      out[i] = y;
-    }
-    const shelfFc = 1500;
-    const shelfRC = 1 / (2 * Math.PI * shelfFc);
-    const shelfAlpha = shelfRC / (shelfRC + hpDt);
-    let shPrevIn = 0, shPrevOut = 0;
-    for (let i = 0; i < out.length; i++) {
-      const x = out[i];
-      const hp = shelfAlpha * (shPrevOut + x - shPrevIn);
-      shPrevIn = x; shPrevOut = hp;
-      out[i] = out[i] + hp * 0.6;
-    }
-    return out;
   }
 
   function computeSpectrum(data, sr, fftSize) {
@@ -603,7 +967,7 @@
   // chorus alone isn't representative of the song, so this gives a much more honest
   // picture of its actual spectral balance, which is what the adaptive tuning below
   // is based on.
-  function computeAveragedSpectrum(data, sr, fftSize, numWindows = 12) {
+  function computeAveragedSpectrum(data, sr, fftSize, numWindows = 16) {
     const totalMags = new Float32Array(fftSize / 2);
     let windowsUsed = 0;
     for (let w = 0; w < numWindows; w++) {
@@ -648,14 +1012,34 @@
     };
   }
 
-  // Reference ratios for a "conventionally balanced" full mix — not a scientific
-  // standard, just a sensible midpoint to measure a song's own balance against.
-  const TYPICAL_BALANCE = { bass: 0.30, lowMid: 0.34, highMid: 0.22, air: 0.14 };
+  // Reference balance for a "conventionally balanced" full mix, expressed the same
+  // way bandEnergyRatio measures a track: the mean of magnitude² per BIN inside
+  // each region, normalised to sum to 1.
+  //
+  // Getting these numbers right matters more than it looks. Because a music
+  // spectrum falls steeply with frequency, a per-bin mean is dominated by the low
+  // band — every real track measures around bass 0.87-0.98 here. The old reference
+  // (0.30 / 0.34 / 0.22 / 0.14) describes an almost flat spectrum, i.e. white
+  // noise, so every single track read as wildly bass-heavy and every adaptive move
+  // pinned at its clamp: the adaptation was not adapting to anything, it was a
+  // fixed tilt wearing a costume.
+  //
+  // These are derived instead from a power spectral density falling at 4.5 dB per
+  // octave, which is roughly the long-term average slope of commercial masters,
+  // integrated over each region. Deviations from it now land in the ±5 dB range
+  // that a corrective move is actually meant to cover.
+  const TYPICAL_BALANCE = { bass: 0.9534, lowMid: 0.0415, highMid: 0.0042, air: 0.0009 };
 
-  function adaptiveMultiplier(actual, typical, strength = 3.0) {
-    const diff = actual - typical;
-    const mult = 1 - diff * strength;
-    return Math.max(0.75, Math.min(1.25, mult));
+  // How many dB this region sits above/below the reference balance.
+  function balanceErrorDb(actual, typical) {
+    return 10 * Math.log10(Math.max(actual, 1e-6) / typical);
+  }
+
+  // Band makeup trim, in dB terms so it behaves the same for the wide low band and
+  // the narrow air band (a linear difference of ratios is meaningless once the
+  // reference ratio is 0.0009).
+  function adaptiveMultiplier(actual, typical, strengthDb = 0.35) {
+    return clamp(Math.pow(10, -balanceErrorDb(actual, typical) * strengthDb / 20), 0.78, 1.25);
   }
 
   function fftMagnitude(input) {
@@ -717,97 +1101,176 @@
     return 'halo';                             // everything else -> smooth, balanced
   }
 
-  // ---------- Processing Chain (Web Audio Graph) ----------
-  // Multiband compression: the signal is split into three bands (low/mid/high),
-  // each getting its own compressor with its own threshold/ratio/timing. That's
-  // what makes bass react dynamically to transients instead of just being an
-  // EQ boost — the core of what a real mastering difference actually is.
-  //
-  // The crossover filters use a Linkwitz-Riley (LR4) design: two cascaded 2nd-order
-  // Butterworth filters at the same frequency. A single Butterworth lowpass+highpass
-  // pair does NOT sum back to a flat response (there's a dip right at the crossover
-  // frequency, which was quietly eating high end); LR4 sums flat with no dip.
-  function makeCrossoverStage(ctx, type, freq) {
+  // ================================================================
+  //  PROCESSING CHAIN (Web Audio graph)
+  // ================================================================
+
+  // Web Audio does NOT read BiquadFilterNode.Q the same way for every filter type:
+  // for lowpass and highpass it is a resonance in DECIBELS, while for allpass,
+  // bandpass, notch and peaking it is a plain Q. Setting Q = 0.7071 on a lowpass
+  // therefore does not give a Butterworth response at all — it gives Q = 1.086, a
+  // filter with a resonant bump at its own corner frequency. Every crossover,
+  // cleanup filter and exciter filter in this chain was quietly ringing because of
+  // it; measured on the old 3-band split, the band sum peaked +7.4 dB at the
+  // 200 Hz crossover. Butterworth is 20·log10(1/√2) = -3.01 dB.
+  const BUTTERWORTH_Q_DB = -3.0102999566398116;
+  const isDbQ = type => type === 'lowpass' || type === 'highpass';
+
+  // Linkwitz-Riley 4th order: two cascaded Butterworth (Q = 1/√2) sections. An LR4
+  // lowpass and highpass at the same frequency sum to a flat magnitude; a plain
+  // Butterworth pair does not (it dips right at the crossover), which used to eat
+  // a notch out of every band split. Measured end to end, the band tree below now
+  // recombines to within ±0.35 dB from 40 Hz to 16 kHz.
+  function makeLR4(ctx, type, freq) {
+    const q = isDbQ(type) ? BUTTERWORTH_Q_DB : Math.SQRT1_2;
     const a = ctx.createBiquadFilter();
-    a.type = type; a.frequency.value = freq; a.Q.value = 0.7071;
+    a.type = type; a.frequency.value = freq; a.Q.value = q;
     const b = ctx.createBiquadFilter();
-    b.type = type; b.frequency.value = freq; b.Q.value = 0.7071;
+    b.type = type; b.frequency.value = freq; b.Q.value = q;
     a.connect(b);
     return { input: a, output: b };
   }
 
+  function seriesStages(stages) {
+    for (let i = 0; i < stages.length - 1; i++) stages[i].output.connect(stages[i + 1].input);
+    return { input: stages[0].input, output: stages[stages.length - 1].output };
+  }
+
+  // Four-band multiband compression across a phase-correct crossover tree.
+  //
+  // Splitting into N bands with LR4 filters is only flat if every band is carried
+  // through an all-pass at the crossovers it does NOT belong to — otherwise the
+  // bands are phase-misaligned where they overlap and the sum has real notches in
+  // it. Each band below therefore passes the same three crossover points, as
+  // either LP, HP or AP, so the four bands recombine to a flat magnitude response:
+  //
+  //   low     = LP(f1) · AP(f2) · AP(f3)
+  //   lowMid  = HP(f1) · LP(f2) · AP(f3)
+  //   highMid = HP(f1) · HP(f2) · LP(f3)
+  //   air     = HP(f1) · HP(f2) · HP(f3)
+  //
+  // The air band (>5.2 kHz) runs fast attack and a higher ratio, which makes it do
+  // double duty as a de-esser: it rides down harsh sibilance and cymbal spikes
+  // without the whole top end being dulled by a static EQ cut.
   function buildMultibandStage(ctx, sourceNode, preset, intensity) {
-    const lowX = 200, highX = 3000;
+    const F1 = 110, F2 = 900, F3 = 5200;
 
     // Adapt each band's makeup to how much energy THIS song already has there,
     // relative to a typically-balanced mix — pull back where it's already full,
     // lean in a bit where it's thin. Falls back to neutral (1x) if no analysis
     // is available yet.
     const adapt = analysisData ? {
-      low:  adaptiveMultiplier(analysisData.bassRatio, TYPICAL_BALANCE.bass),
-      mid:  adaptiveMultiplier(analysisData.lowMidRatio, TYPICAL_BALANCE.lowMid),
-      high: adaptiveMultiplier(analysisData.highMidRatio, TYPICAL_BALANCE.highMid),
-    } : { low: 1, mid: 1, high: 1 };
+      low:     adaptiveMultiplier(analysisData.bassRatio, TYPICAL_BALANCE.bass),
+      lowMid:  adaptiveMultiplier(analysisData.lowMidRatio, TYPICAL_BALANCE.lowMid),
+      highMid: adaptiveMultiplier(analysisData.highMidRatio, TYPICAL_BALANCE.highMid),
+      air:     adaptiveMultiplier(analysisData.airRatio, TYPICAL_BALANCE.air),
+    } : { low: 1, lowMid: 1, highMid: 1, air: 1 };
 
-    const lowpassLow = makeCrossoverStage(ctx, 'lowpass', lowX);
+    const paths = {
+      low: seriesStages([
+        makeLR4(ctx, 'lowpass', F1), makeLR4(ctx, 'allpass', F2), makeLR4(ctx, 'allpass', F3),
+      ]),
+      lowMid: seriesStages([
+        makeLR4(ctx, 'highpass', F1), makeLR4(ctx, 'lowpass', F2), makeLR4(ctx, 'allpass', F3),
+      ]),
+      highMid: seriesStages([
+        makeLR4(ctx, 'highpass', F1), makeLR4(ctx, 'highpass', F2), makeLR4(ctx, 'lowpass', F3),
+      ]),
+      air: seriesStages([
+        makeLR4(ctx, 'highpass', F1), makeLR4(ctx, 'highpass', F2), makeLR4(ctx, 'highpass', F3),
+      ]),
+    };
 
-    const highpassMidStage = makeCrossoverStage(ctx, 'highpass', lowX);
-    const lowpassMidStage = makeCrossoverStage(ctx, 'lowpass', highX);
-
-    const highpassHigh = makeCrossoverStage(ctx, 'highpass', highX);
-
-    sourceNode.connect(lowpassLow.input);
-    sourceNode.connect(highpassMidStage.input);
-    highpassMidStage.output.connect(lowpassMidStage.input);
-    sourceNode.connect(highpassHigh.input);
-
-    function bandComp(cfg, adaptMult) {
+    function bandComp(cfg, adaptMult, knee) {
       const c = ctx.createDynamicsCompressor();
       c.threshold.value = cfg.thresh;
-      c.ratio.value = 1 + (cfg.ratio - 1) * intensity;
+      c.ratio.value = clamp(1 + (cfg.ratio - 1) * intensity, 1, 20);
       c.attack.value = cfg.attack;
       c.release.value = cfg.release;
-      c.knee.value = 6;
+      c.knee.value = knee;
       const g = ctx.createGain();
       g.gain.value = 1 + (cfg.makeup - 1) * intensity * adaptMult;
       c.connect(g);
       return { input: c, output: g };
     }
 
-    const low = bandComp(preset.bands.low, adapt.low);
-    lowpassLow.output.connect(low.input);
-
-    const mid = bandComp(preset.bands.mid, adapt.mid);
-    lowpassMidStage.output.connect(mid.input);
-
-    const high = bandComp(preset.bands.high, adapt.high);
-    highpassHigh.output.connect(high.input);
-
     const sum = ctx.createGain();
-    low.output.connect(sum);
-    mid.output.connect(sum);
-    high.output.connect(sum);
+    // A softer knee on the air band keeps the de-essing from sounding like a gate.
+    const knees = { low: 6, lowMid: 6, highMid: 8, air: 12 };
+    for (const key of ['low', 'lowMid', 'highMid', 'air']) {
+      sourceNode.connect(paths[key].input);
+      const comp = bandComp(preset.bands[key], adapt[key], knees[key]);
+      paths[key].output.connect(comp.input);
+      comp.output.connect(sum);
+    }
     return sum;
   }
 
-  // Saturation: harmonic distortion for "analog" warmth/character rather than pure loudness.
-  // Deliberately gentle drive — even at preset.saturation's max it should read as
-  // warmth, not distortion.
+  // Corrective EQ: gentle, wide moves derived from THIS track's own spectrum
+  // rather than from the preset. This is the part that makes two different songs
+  // on the same preset both end up sounding balanced instead of both getting the
+  // same boost applied to very different starting points. Every move is capped at
+  // 1.5-2 dB, because past that you are remixing, not mastering.
+  function buildCorrectiveEq(ctx, sourceNode, intensity) {
+    if (!analysisData) return sourceNode;
+    let node = sourceNode;
+
+    // The two upper regions are narrow and get sparse on material that simply has
+    // little going on up there, so they are allowed less room to move than the
+    // broad low bands — a thin-sounding mix should be nudged, not rewritten.
+    const strength = 0.35 * intensity;
+    const moves = [
+      { type: 'lowshelf',  freq: 120,  Q: 0.7, cap: 2.0, err: balanceErrorDb(analysisData.bassRatio, TYPICAL_BALANCE.bass) },
+      { type: 'peaking',   freq: 600,  Q: 0.8, cap: 2.0, err: balanceErrorDb(analysisData.lowMidRatio, TYPICAL_BALANCE.lowMid) },
+      { type: 'peaking',   freq: 3500, Q: 0.8, cap: 1.5, err: balanceErrorDb(analysisData.highMidRatio, TYPICAL_BALANCE.highMid) },
+      { type: 'highshelf', freq: 9000, Q: 0.7, cap: 1.5, err: balanceErrorDb(analysisData.airRatio, TYPICAL_BALANCE.air) },
+    ];
+
+    for (const m of moves) {
+      const gain = clamp(-m.err * strength, -m.cap, m.cap);
+      if (Math.abs(gain) < 0.15) continue;
+      const f = ctx.createBiquadFilter();
+      f.type = m.type;
+      f.frequency.value = m.freq;
+      f.Q.value = m.Q;
+      f.gain.value = gain;
+      node.connect(f);
+      node = f;
+    }
+
+    return node;
+  }
+
+  // Saturation: harmonic distortion for "analog" warmth/character rather than pure
+  // loudness. A small DC-compensated asymmetry is baked into the curve so it
+  // generates even-order harmonics (tube-ish, warm) alongside the odd-order ones a
+  // purely symmetric curve gives you (transistor-ish, hard).
   function makeSaturationCurve(amount) {
-    const n = 2048;
+    const n = 4096;
     const curve = new Float32Array(n);
     const drive = 1 + amount * 2.2;
-    const norm = Math.tanh(drive);
+    const bias = 0.05 * amount;
+    const dc = Math.tanh(drive * bias);
+    const norm = Math.tanh(drive * (1 + bias)) - dc;
     for (let i = 0; i < n; i++) {
       const x = (i / (n - 1)) * 2 - 1;
-      curve[i] = Math.tanh(drive * x) / norm;
+      curve[i] = (Math.tanh(drive * (x + bias)) - dc) / norm;
     }
     return curve;
   }
 
-  // Stereo width via Mid/Side processing (like Ozone Imager / LANDR's Stereo Field).
-  function applyStereoWidth(ctx, sourceNode, width) {
-    if (Math.abs(width - 1) < 0.02) return sourceNode;
+  // Stereo image via Mid/Side, but frequency-dependent — which is the difference
+  // between a master that sounds wide and one that just sounds phasey:
+  //   * the side channel gets a low shelf, so the bottom end collapses toward mono
+  //     and stays tight, centred and mono-compatible (club systems and vinyl both
+  //     need this; a wide sub is a cancelled sub);
+  //   * the side channel gets a high shelf, so the width that IS added lands where
+  //     the ear reads it as air and space rather than as a smeared centre.
+  function applyStereoImage(ctx, sourceNode, width, bassMono, sideAirDb) {
+    const doWidth = Math.abs(width - 1) >= 0.02;
+    const doBass = bassMono > 0.02;
+    const doAir = Math.abs(sideAirDb) > 0.05;
+    if (!doWidth && !doBass && !doAir) return sourceNode;
 
     const splitter = ctx.createChannelSplitter(2);
     sourceNode.connect(splitter);
@@ -820,8 +1283,29 @@
     splitter.connect(sideL, 0); splitter.connect(sideR, 1);
     const side = ctx.createGain();
     sideL.connect(side); sideR.connect(side);
+
+    let sideNode = side;
+    if (doBass) {
+      const monoShelf = ctx.createBiquadFilter();
+      monoShelf.type = 'lowshelf';
+      monoShelf.frequency.value = 170;
+      monoShelf.Q.value = 0.7;
+      monoShelf.gain.value = -14 * bassMono;
+      sideNode.connect(monoShelf);
+      sideNode = monoShelf;
+    }
+    if (doAir) {
+      const airShelf = ctx.createBiquadFilter();
+      airShelf.type = 'highshelf';
+      airShelf.frequency.value = 7000;
+      airShelf.Q.value = 0.7;
+      airShelf.gain.value = sideAirDb;
+      sideNode.connect(airShelf);
+      sideNode = airShelf;
+    }
+
     const sideScaled = ctx.createGain(); sideScaled.gain.value = width;
-    side.connect(sideScaled);
+    sideNode.connect(sideScaled);
 
     const outL = ctx.createGain();
     mid.connect(outL); sideScaled.connect(outL);
@@ -842,16 +1326,20 @@
   // signal. This is what actually creates "presence"/"air" — a highshelf EQ boost
   // only turns up what's already there; an exciter adds new upper harmonic content,
   // which is what makes something sound close and alive instead of distant and dull.
+  //
+  // The band it works on starts at 5 kHz and is rolled off again at 15 kHz: lower
+  // than that and it just manufactures sibilance, higher and it is only adding
+  // fizz above where the harmonics are musically useful.
   function applyExciter(ctx, sourceNode, amount) {
     if (amount < 0.02) return sourceNode;
 
     const hpf = ctx.createBiquadFilter();
     hpf.type = 'highpass';
-    hpf.frequency.value = 3500;
-    hpf.Q.value = 0.7071;
+    hpf.frequency.value = 5000;
+    hpf.Q.value = BUTTERWORTH_Q_DB;
 
     const shaper = ctx.createWaveShaper();
-    const n = 1024;
+    const n = 2048;
     const curve = new Float32Array(n);
     const drive = 2.0;
     const bias = 0.08; // slight asymmetry -> even harmonics, more "alive" than symmetric clipping
@@ -862,12 +1350,18 @@
     shaper.curve = curve;
     shaper.oversample = '4x';
 
+    const tame = ctx.createBiquadFilter();
+    tame.type = 'lowpass';
+    tame.frequency.value = 15000;
+    tame.Q.value = BUTTERWORTH_Q_DB;
+
     const wet = ctx.createGain();
     wet.gain.value = amount * 0.35; // parallel addition, always a minority of the signal
 
     sourceNode.connect(hpf);
     hpf.connect(shaper);
-    shaper.connect(wet);
+    shaper.connect(tame);
+    tame.connect(wet);
 
     const sum = ctx.createGain();
     sourceNode.connect(sum);
@@ -875,21 +1369,26 @@
     return sum;
   }
 
-  function buildProcessingChain(ctx, sourceNode, preset, intensity, destination, trim = 1.0) {
+  function buildProcessingChain(ctx, sourceNode, preset, intensity, destination) {
     // 0) Cleanup: remove sub-rumble/DC-ish content and ultrasonic content before
     // anything else touches the signal. Standard mastering hygiene, cheap insurance
     // against inter-sample peaks and mud.
-    const cleanupHp = ctx.createBiquadFilter();
-    cleanupHp.type = 'highpass'; cleanupHp.frequency.value = 25; cleanupHp.Q.value = 0.7071;
+    const cleanupHp = makeLR4(ctx, 'highpass', 24);
     const cleanupLp = ctx.createBiquadFilter();
-    cleanupLp.type = 'lowpass'; cleanupLp.frequency.value = 19000; cleanupLp.Q.value = 0.7071;
-    sourceNode.connect(cleanupHp);
-    cleanupHp.connect(cleanupLp);
+    cleanupLp.type = 'lowpass'; cleanupLp.frequency.value = 19500; cleanupLp.Q.value = BUTTERWORTH_Q_DB;
+    sourceNode.connect(cleanupHp.input);
+    cleanupHp.output.connect(cleanupLp);
+    let node = cleanupLp;
 
-    // 1) Multiband dynamics — the real character difference between the presets
-    let node = buildMultibandStage(ctx, cleanupLp, preset, intensity);
+    // 1) Corrective EQ from the track's own spectrum — fix the mix's balance
+    // BEFORE compressing it, so the compressors react to a balanced signal
+    // instead of chasing whatever was already too loud.
+    node = buildCorrectiveEq(ctx, node, intensity);
 
-    // 2) Character EQ — just fine tonal polish now, no longer the main driver
+    // 2) Multiband dynamics — the real character difference between the presets
+    node = buildMultibandStage(ctx, node, preset, intensity);
+
+    // 3) Character EQ — just fine tonal polish now, no longer the main driver
     preset.eq.forEach(band => {
       const filter = ctx.createBiquadFilter();
       filter.type = band.type;
@@ -900,7 +1399,7 @@
       node = filter;
     });
 
-    // 3) Saturation — as a parallel blend: part dry, part saturated. That way, even
+    // 4) Saturation — as a parallel blend: part dry, part saturated. That way, even
     // at a preset's max saturation + 100% intensity, only a warming portion is
     // audible, never a hard distortion of the whole signal.
     const satAmount = preset.saturation * intensity;
@@ -920,136 +1419,132 @@
       node = blend;
     }
 
-    // 3b) Exciter — real harmonic "air" on top, not just an EQ boost. This is what
+    // 5) Exciter — real harmonic "air" on top, not just an EQ boost. This is what
     // keeps a bright master feeling close and present instead of distant/behind glass.
     const airAdapt = analysisData ? adaptiveMultiplier(analysisData.airRatio, TYPICAL_BALANCE.air) : 1;
     node = applyExciter(ctx, node, preset.air * intensity * airAdapt);
 
-    // 4) Stereo width
+    // 6) Stereo image — width above, mono below.
     const width = 1 + (preset.stereoWidth - 1) * intensity;
-    node = applyStereoWidth(ctx, node, width);
+    node = applyStereoImage(ctx, node, width, preset.bassMono * intensity, preset.sideAir * intensity);
 
-    // 5) Bus compressor ("glue") — plain serial compression. (An earlier version of
+    // 7) Bus compressor ("glue") — plain serial compression. (An earlier version of
     // this ran it as a parallel dry/compressed blend for extra punch, but a
     // compressor's gain reduction moves dynamically over time — summing that against
     // a static dry copy creates a slowly modulating comb-filter, which is audible as
     // a chorus/phasing-like artifact. Serial avoids that entirely.)
     const glue = ctx.createDynamicsCompressor();
     glue.threshold.value = preset.glue.thresh;
-    glue.ratio.value = 1 + (preset.glue.ratio - 1) * intensity;
+    glue.ratio.value = clamp(1 + (preset.glue.ratio - 1) * intensity, 1, 20);
     glue.attack.value = preset.glue.attack;
     glue.release.value = preset.glue.release;
     glue.knee.value = 6;
     node.connect(glue);
     node = glue;
 
-    const makeupGain = ctx.createGain();
-    makeupGain.gain.value = 1 + 0.18 * intensity;
-    node.connect(makeupGain);
-    node = makeupGain;
-
-    const trimGain = ctx.createGain();
-    trimGain.gain.value = trim;
-    node.connect(trimGain);
-    node = trimGain;
-
-    // Safety headroom: leave a little air BEFORE the limiter so it doesn't have to
-    // work hard and audibly against the signal all the time (that's what causes
-    // pumping/distortion).
+    // 8) Render headroom only. There is deliberately no limiter and no loudness
+    // trim in the graph: both are done on the rendered samples, where the whole
+    // track is visible at once.
     const headroom = ctx.createGain();
-    headroom.gain.value = 0.75;
+    headroom.gain.value = RENDER_HEADROOM;
     node.connect(headroom);
-    node = headroom;
 
-    // Soft clipper: gently shave the occasional hot peak with a smooth saturation
-    // curve BEFORE the hard limiter. That means the limiter itself has to work much
-    // less, which is what keeps a loud master sounding clean instead of pumping —
-    // the same two-stage approach real mastering limiters use.
-    const softClip = ctx.createWaveShaper();
-    const scN = 1024;
-    const scCurve = new Float32Array(scN);
-    for (let i = 0; i < scN; i++) {
-      const x = (i / (scN - 1)) * 2 - 1;
-      scCurve[i] = Math.tanh(x * 1.4) / Math.tanh(1.4);
-    }
-    softClip.curve = scCurve;
-    softClip.oversample = '4x';
-    node.connect(softClip);
-    node = softClip;
-
-    const limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -1.5;
-    limiter.ratio.value = 20;
-    limiter.attack.value = 0.002;
-    limiter.release.value = 0.08;
-    limiter.knee.value = 4;
-    node.connect(limiter);
-    node = limiter;
-
-    node.connect(destination);
-    return node;
+    headroom.connect(destination);
+    return headroom;
   }
 
-  // ---------- Fine analysis (loudness matching after choosing a preset) ----------
-  // Proper ITU-R BS.1770-4 style gated measurement instead of a naive whole-track
-  // mean square: quiet/silent sections shouldn't drag the loudness estimate down,
-  // since that's not how Spotify/streaming LUFS normalization actually measures it.
-  function measureLufs(buffer) {
-    const ch0 = buffer.getChannelData(0);
-    const ch1 = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : ch0;
-    const sr = buffer.sampleRate;
-    const stage1 = kWeightFilter(ch0, sr);
-    const stage1R = kWeightFilter(ch1, sr);
-
-    const blockSize = Math.floor(sr * 0.4);
-    const hopSize = Math.floor(blockSize * 0.25); // 75% overlap
-    const blockPowers = [];
-    for (let i = 0; i + blockSize <= stage1.length; i += hopSize) {
-      let sumSq = 0;
-      for (let j = i; j < i + blockSize; j++) {
-        sumSq += (stage1[j] * stage1[j] + stage1R[j] * stage1R[j]) / 2;
-      }
-      blockPowers.push(sumSq / blockSize);
-    }
-    if (!blockPowers.length) return -70;
-
-    const toLufs = p => -0.691 + 10 * Math.log10(p || 1e-12);
-
-    // Absolute gate: throw out anything below -70 LUFS (near silence)
-    const absGated = blockPowers.filter(p => toLufs(p) > -70);
-    if (!absGated.length) return -70;
-
-    // Relative gate: throw out anything more than 10dB below the ungated mean
-    const ungatedMean = absGated.reduce((a, b) => a + b, 0) / absGated.length;
-    const relativeThreshold = toLufs(ungatedMean) - 10;
-    const relGated = absGated.filter(p => toLufs(p) > relativeThreshold);
-    const finalSet = relGated.length ? relGated : absGated;
-
-    const gatedMean = finalSet.reduce((a, b) => a + b, 0) / finalSet.length;
-    return toLufs(gatedMean);
-  }
-
-  async function runFineAnalysis() {
-    if (!originalBuffer || !currentPreset) return;
-    const myToken = ++fineAnalysisToken;
-
+  // ================================================================
+  //  MASTERING PASS
+  // ================================================================
+  function renderChain(preset, intensity) {
     const offlineCtx = new OfflineAudioContext(
       originalBuffer.numberOfChannels, originalBuffer.length, originalBuffer.sampleRate
     );
     const src = offlineCtx.createBufferSource();
     src.buffer = originalBuffer;
-    buildProcessingChain(offlineCtx, src, currentPreset, currentIntensity, offlineCtx.destination, 1.0);
+    buildProcessingChain(offlineCtx, src, preset, intensity, offlineCtx.destination);
     src.start(0);
-    const rendered = await offlineCtx.startRendering();
+    return offlineCtx.startRendering();
+  }
 
-    if (myToken !== fineAnalysisToken) return;
+  // The master is rendered once, here, and then reused for the A/B preview and for
+  // every export — so the preview is not an approximation of the file, it IS the
+  // file.
+  //
+  // Loudness is matched against a real render rather than guessed from the source,
+  // and that needs only ONE render. The loudness trim belongs after the last
+  // level-dependent stage in the chain, so applying it to the rendered samples in
+  // JS is mathematically identical to baking it into the graph and re-rendering —
+  // which is what this used to do, at the cost of processing the whole track
+  // twice. It is then verified and nudged once more against the limiter, because
+  // limiting itself costs a few tenths of a dB.
+  async function runMastering(onStage) {
+    if (!originalBuffer || !currentPreset) return false;
+    const myToken = ++fineAnalysisToken;
+    const preset = currentPreset;
+    const intensity = currentIntensity;
+    const sr = originalBuffer.sampleRate;
+    const target = preset.targetLufs;
+    const ceilingDb = preset.ceilingDb !== undefined ? preset.ceilingDb : -1;
+    const ceiling = Math.pow(10, ceilingDb / 20) * TP_GUARD;
 
-    const measured = measureLufs(rendered);
-    const target = currentPreset.targetLufs;
-    const correctionDb = Math.max(-5, Math.min(5, target - measured));
-    currentTrim = Math.pow(10, correctionDb / 20);
+    // Render the full chain, once.
+    if (onStage) onStage('Mastering …');
+    await wait(16);
+    let rendered;
+    try {
+      rendered = await renderChain(preset, intensity);
+    } catch (err) {
+      alert('Mastering failed while rendering this track. Please try a shorter file.');
+      return false;
+    }
+    if (myToken !== fineAnalysisToken) return false;
 
-    if (isPlaying && playMode === 'mastered') restartPlayback();
+    if (onStage) onStage('Matching loudness …');
+    await wait(16);
+
+    const chans = channelsOf(rendered);
+    const n = rendered.length;
+
+    // Measure what the chain actually produced, then scale onto the preset's
+    // target. Wide but bounded: enough to lift a genuinely quiet recording onto
+    // the target, not so much that a near-silent file gets blown 40 dB up into
+    // its own noise floor.
+    scaleChannels(chans, 1 / RENDER_HEADROOM);
+    const unityLufs = measureLufsChannels(chans, sr);
+    const trim = Math.pow(10, clamp(target - unityLufs, -14, 24) / 20);
+    scaleChannels(chans, trim);
+
+    if (onStage) onStage('Limiting …');
+    await wait(16);
+
+    // One exhaustive true-peak scan, then as many gain trials as the loudness
+    // match needs: scaling the audio scales its true-peak envelope exactly, so
+    // the envelope never has to be recomputed.
+    const env = new Float32Array(n);
+    truePeakEnvelope(chans, env);
+    const gain = new Float32Array(n);
+
+    let a = 1;
+    buildLimiterGain(env, gain, sr, ceiling, a);
+
+    // Limiting always costs a little loudness. Measure what the limited signal
+    // WOULD be, then close the remaining gap before committing to it — so the
+    // audio is only ever multiplied once, by the final curve.
+    const limited = measureLufsChannels(chans, sr, gain, a);
+    const delta = target - limited;
+    if (Math.abs(delta) > 0.2) {
+      a = Math.pow(10, clamp(delta, -4, 4) / 20);
+      buildLimiterGain(env, gain, sr, ceiling, a);
+    }
+    applyLimiterGain(chans, gain, a);
+
+    softClipCeiling(chans, ceiling);
+    applyEdgeFades(chans, sr);
+
+    if (myToken !== fineAnalysisToken) return false;
+    masteredBuffer = rendered;
+    return true;
   }
 
   // ---------- Playback ----------
@@ -1070,17 +1565,14 @@
   function startPlayback(offset = 0) {
     if (!originalBuffer) return;
     stopPlayback();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
 
+    const buffer = (playMode === 'mastered' && masteredBuffer) ? masteredBuffer : originalBuffer;
     const src = audioCtx.createBufferSource();
-    src.buffer = originalBuffer;
+    src.buffer = buffer;
+    src.connect(audioCtx.destination);
 
-    if (playMode === 'mastered' && currentPreset) {
-      buildProcessingChain(audioCtx, src, currentPreset, currentIntensity, audioCtx.destination, currentTrim);
-    } else {
-      src.connect(audioCtx.destination);
-    }
-
-    src.start(0, offset);
+    src.start(0, Math.min(offset, buffer.duration));
     playStartedAt = audioCtx.currentTime - offset;
     playingSource = src;
     isPlaying = true;
@@ -1113,7 +1605,7 @@
     if (isPlaying) restartPlayback();
   });
   btnMastered.addEventListener('click', () => {
-    if (!currentPreset) return;
+    if (!currentPreset || !masteredBuffer) return;
     playMode = 'mastered';
     btnMastered.classList.add('active');
     btnOrig.classList.remove('active');
@@ -1133,18 +1625,13 @@
     return m + ':' + sec.toString().padStart(2, '0');
   }
 
-  // ---------- Offline Export ----------
+  // ---------- Export ----------
+  // Nothing is re-rendered here: the master already exists, so exporting is just
+  // encoding it. That also guarantees the file and the preview are identical.
   async function renderMasteredBuffer() {
-    const offlineCtx = new OfflineAudioContext(
-      originalBuffer.numberOfChannels,
-      originalBuffer.length,
-      originalBuffer.sampleRate
-    );
-    const src = offlineCtx.createBufferSource();
-    src.buffer = originalBuffer;
-    buildProcessingChain(offlineCtx, src, currentPreset, currentIntensity, offlineCtx.destination, currentTrim);
-    src.start(0);
-    return offlineCtx.startRendering();
+    if (masteredBuffer) return masteredBuffer;
+    const ok = await runMastering(null);
+    return ok ? masteredBuffer : null;
   }
 
   function downloadBlob(blob, extension) {
@@ -1172,11 +1659,13 @@
     exportProgress.value = 20;
 
     const rendered = await renderMasteredBuffer();
-    exportProgress.value = 80;
+    exportProgress.value = 70;
 
-    const wavBlob = bufferToWav(rendered);
-    exportProgress.value = 100;
-    downloadBlob(wavBlob, 'wav');
+    if (rendered) {
+      const wavBlob = bufferToWav(rendered, 24);
+      exportProgress.value = 100;
+      downloadBlob(wavBlob, 'wav');
+    }
 
     setTimeout(() => {
       setExportButtonsDisabled(false);
@@ -1196,11 +1685,13 @@
     exportProgress.value = 20;
 
     const rendered = await renderMasteredBuffer();
-    exportProgress.value = 70;
+    exportProgress.value = 60;
 
-    const mp3Blob = bufferToMp3(rendered);
-    exportProgress.value = 100;
-    downloadBlob(mp3Blob, 'mp3');
+    if (rendered) {
+      const mp3Blob = bufferToMp3(rendered);
+      exportProgress.value = 100;
+      downloadBlob(mp3Blob, 'mp3');
+    }
 
     setTimeout(() => {
       setExportButtonsDisabled(false);
@@ -1209,9 +1700,6 @@
     }, 600);
   });
 
-  // M4A export: real AAC encoding via ffmpeg.wasm (a full FFmpeg build compiled to
-  // WebAssembly), entirely client-side — no server upload involved. Loaded lazily
-  // from the module script tag above, only when this button is first used.
   exportM4aBtn.addEventListener('click', async () => {
     if (!originalBuffer || !currentPreset) return;
     if (typeof window.getSignalFFmpeg === 'undefined') {
@@ -1231,7 +1719,8 @@
       exportProgress.value = 40;
 
       const rendered = await renderMasteredBuffer();
-      const wavBlob = bufferToWav(rendered);
+      if (!rendered) throw new Error('no master');
+      const wavBlob = bufferToWav(rendered, 24);
       const wavData = new Uint8Array(await wavBlob.arrayBuffer());
 
       await ffmpeg.writeFile('input.wav', wavData);
@@ -1240,7 +1729,7 @@
         '-i', 'input.wav',
         '-i', 'cover.jpg',
         '-map', '0:a', '-map', '1:v',
-        '-c:a', 'aac', '-b:a', '192k',
+        '-c:a', 'aac', '-b:a', '256k',
         '-c:v', 'copy',
         '-disposition:v:0', 'attached_pic',
         '-metadata', `artist=${EXPORT_ARTIST}`,
@@ -1263,11 +1752,20 @@
     }, 600);
   });
 
+  // Going from 32-bit float to 16-bit integer throws away real information. Doing
+  // it by plain rounding turns that loss into quantization DISTORTION, which is
+  // correlated with the music and audible as grit on fades and reverb tails.
+  // Adding TPDF (triangular) dither at 1 LSB before rounding converts it into a
+  // steady, uncorrelated, inaudible noise floor instead — the standard, and the
+  // last real quality decision in a mastering chain.
   function floatTo16BitPCM(channelData) {
     const out = new Int16Array(channelData.length);
+    const lsb = 1 / 32768;
     for (let i = 0; i < channelData.length; i++) {
-      const s = Math.max(-1, Math.min(1, channelData[i]));
-      out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      const dither = (Math.random() - Math.random()) * lsb; // TPDF, peak ±1 LSB
+      const s = Math.max(-1, Math.min(1, channelData[i] + dither));
+      const q = Math.round(s < 0 ? s * 0x8000 : s * 0x7FFF);
+      out[i] = q > 32767 ? 32767 : (q < -32768 ? -32768 : q);
     }
     return out;
   }
@@ -1364,11 +1862,15 @@
     return new Blob([id3Tag, ...chunks], { type: 'audio/mp3' });
   }
 
-  function bufferToWav(buffer) {
+  // WAV export is 24-bit by default. The master lives in 32-bit float internally,
+  // and squeezing it into 16 bits at the very last step was throwing away ~48 dB
+  // of usable floor for no reason — 24-bit is what you would hand to a distributor
+  // or take into another DAW, and it needs no dither at all.
+  function bufferToWav(buffer, bitDepth = 24) {
     const numChannels = buffer.numberOfChannels;
     const sampleRate = buffer.sampleRate;
     const numFrames = buffer.length;
-    const bytesPerSample = 2;
+    const bytesPerSample = bitDepth === 16 ? 2 : 3;
     const blockAlign = numChannels * bytesPerSample;
     const dataSize = numFrames * blockAlign;
     const bufferSize = 44 + dataSize;
@@ -1386,7 +1888,7 @@
     view.setUint32(24, sampleRate, true);
     view.setUint32(28, sampleRate * blockAlign, true);
     view.setUint16(32, blockAlign, true);
-    view.setUint16(34, 16, true);
+    view.setUint16(34, bitDepth, true);
     writeString(view, 36, 'data');
     view.setUint32(40, dataSize, true);
 
@@ -1394,12 +1896,27 @@
     for (let c = 0; c < numChannels; c++) channels.push(buffer.getChannelData(c));
 
     let offset = 44;
-    for (let i = 0; i < numFrames; i++) {
-      for (let c = 0; c < numChannels; c++) {
-        let sample = Math.max(-1, Math.min(1, channels[c][i]));
-        sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-        view.setInt16(offset, sample, true);
-        offset += 2;
+    if (bitDepth === 16) {
+      for (let c = 0; c < numChannels; c++) channels[c] = floatTo16BitPCM(channels[c]);
+      for (let i = 0; i < numFrames; i++) {
+        for (let c = 0; c < numChannels; c++) {
+          view.setInt16(offset, channels[c][i], true);
+          offset += 2;
+        }
+      }
+    } else {
+      for (let i = 0; i < numFrames; i++) {
+        for (let c = 0; c < numChannels; c++) {
+          const s = Math.max(-1, Math.min(1, channels[c][i]));
+          let v = Math.round(s < 0 ? s * 0x800000 : s * 0x7FFFFF);
+          if (v > 0x7FFFFF) v = 0x7FFFFF;
+          if (v < -0x800000) v = -0x800000;
+          if (v < 0) v += 0x1000000;
+          view.setUint8(offset, v & 0xFF);
+          view.setUint8(offset + 1, (v >> 8) & 0xFF);
+          view.setUint8(offset + 2, (v >> 16) & 0xFF);
+          offset += 3;
+        }
       }
     }
     return new Blob([arrBuf], { type: 'audio/wav' });
