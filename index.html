@@ -181,6 +181,7 @@
   #pageContent.show{ opacity:1; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js"></script>
+<script>window.LAMEJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.1/lame.min.js";</script>
 <script type="module">
   // Lazy-loaded on first M4A export request only — this is a ~25-30MB WASM build
   // of real FFmpeg, so we don't want it downloading just from opening the page.
@@ -270,6 +271,749 @@
 </div>
 </div>
 
+<script id="signalDspSource" type="text/js-worker">
+// ===================================================================
+//  signal — DSP core
+// ===================================================================
+// Everything in here is pure number crunching over Float32Arrays: metering,
+// limiting, and file encoding. It is deliberately kept free of any DOM or Web
+// Audio reference so it can run inside a Worker, which is where it normally
+// lives. Mastering a long track is several seconds of tight loops; running that
+// on the main thread freezes the UI and starves the audio thread, which is what
+// made the preview stutter. The page below loads this same source into a Worker
+// (and falls back to running it in-page only if Workers are unavailable).
+function createSignalDsp() {
+  'use strict';
+
+  const clamp = (v, lo, hi) => v < lo ? lo : (v > hi ? hi : v);
+
+  // ---------- biquads ----------
+  function biquadState() { return { x1: 0, x2: 0, y1: 0, y2: 0 }; }
+
+  // Direct-form-I biquad. Carries its state across calls so a long track can be
+  // filtered in small chunks instead of allocating a full-length copy of it.
+  function runBiquad(input, out, c, state, len) {
+    const n = len === undefined ? input.length : len;
+    let { x1, x2, y1, y2 } = state;
+    const { b0, b1, b2, a1, a2 } = c;
+    for (let i = 0; i < n; i++) {
+      const x = input[i];
+      const y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+      x2 = x1; x1 = x;
+      y2 = y1; y1 = y;
+      out[i] = y;
+    }
+    state.x1 = x1; state.x2 = x2; state.y1 = y1; state.y2 = y2;
+    return out;
+  }
+
+  // BS.1770-4 stage 1: the "head effect" high shelf (+4 dB above ~1.5 kHz).
+  function kWeightShelf(fs) {
+    const f0 = 1681.974450955533;
+    const G  = 3.999843853973347;
+    const Q  = 0.7071752369554196;
+    const K  = Math.tan(Math.PI * f0 / fs);
+    const Vh = Math.pow(10, G / 20);
+    const Vb = Math.pow(Vh, 0.4996667741545416);
+    const d  = 1 + K / Q + K * K;
+    return {
+      b0: (Vh + Vb * K / Q + K * K) / d,
+      b1: 2 * (K * K - Vh) / d,
+      b2: (Vh - Vb * K / Q + K * K) / d,
+      a1: 2 * (K * K - 1) / d,
+      a2: (1 - K / Q + K * K) / d,
+    };
+  }
+
+  // BS.1770-4 stage 2: the RLB high-pass (~38 Hz), which is what stops sub-bass
+  // rumble from counting as loudness.
+  function kWeightHighpass(fs) {
+    const f0 = 38.13547087602444;
+    const Q  = 0.5003270373238773;
+    const K  = Math.tan(Math.PI * f0 / fs);
+    const d  = 1 + K / Q + K * K;
+    return {
+      b0: 1, b1: -2, b2: 1,
+      a1: 2 * (K * K - 1) / d,
+      a2: (1 - K / Q + K * K) / d,
+    };
+  }
+
+  // ---------- gated loudness (LUFS) ----------
+  // Channel powers are SUMMED (weight 1.0 for L/R), not averaged. Blocks are
+  // built from 100 ms hop sums, so the 75% overlap costs nothing instead of
+  // measuring every sample four times.
+  //
+  // `gain`/`gainScale` optionally measure the track as if a gain curve were
+  // applied to it, which lets the limiter's effect on loudness be evaluated
+  // without ever materialising a second copy of the audio.
+  function measureLufs(chans, sr, gain, gainScale) {
+    const n = chans[0].length;
+    const hop = Math.max(1, Math.round(sr * 0.1));
+    const blockSize = hop * 4;
+    const numHops = Math.floor(n / hop);
+    if (numHops < 4) return -70;
+    const numBlocks = numHops - 3;
+
+    const shelf = kWeightShelf(sr);
+    const hp = kWeightHighpass(sr);
+    const chunk = new Float32Array(hop);
+    const hopSum = new Float64Array(numHops);
+    const power = new Float64Array(numBlocks);
+    const a = gainScale === undefined ? 1 : gainScale;
+
+    for (let c = 0; c < chans.length; c++) {
+      const x = chans[c];
+      const s1 = biquadState(), s2 = biquadState();
+      for (let h = 0; h < numHops; h++) {
+        const off = h * hop;
+        if (gain) for (let i = 0; i < hop; i++) chunk[i] = x[off + i] * gain[off + i] * a;
+        else      for (let i = 0; i < hop; i++) chunk[i] = x[off + i];
+        runBiquad(chunk, chunk, shelf, s1);
+        runBiquad(chunk, chunk, hp, s2);
+        let sum = 0;
+        for (let i = 0; i < hop; i++) sum += chunk[i] * chunk[i];
+        hopSum[h] = sum;
+      }
+      for (let b = 0; b < numBlocks; b++) {
+        power[b] += (hopSum[b] + hopSum[b + 1] + hopSum[b + 2] + hopSum[b + 3]) / blockSize;
+      }
+    }
+
+    const toLufs = p => -0.691 + 10 * Math.log10(p > 0 ? p : 1e-12);
+
+    const absGated = [];
+    for (let b = 0; b < numBlocks; b++) if (toLufs(power[b]) > -70) absGated.push(power[b]);
+    if (!absGated.length) return -70;
+
+    let mean = 0;
+    for (let i = 0; i < absGated.length; i++) mean += absGated[i];
+    mean /= absGated.length;
+    const relThresh = toLufs(mean) - 10;
+    const relGated = absGated.filter(p => toLufs(p) > relThresh);
+    const finalSet = relGated.length ? relGated : absGated;
+
+    let gated = 0;
+    for (let i = 0; i < finalSet.length; i++) gated += finalSet[i];
+    return toLufs(gated / finalSet.length);
+  }
+
+  // ---------- true peak (dBTP) ----------
+  // 4x oversampling via band-limited (windowed-sinc) fractional-delay kernels.
+  const TP_LEN = 24;   // taps per polyphase branch
+  const TP_PHASES = 3; // offsets 0.25 / 0.50 / 0.75 (the sample itself covers 0.0)
+  const TP_BLOCK = 64;
+  let tpKernels = null;
+  let tpL1 = 0;
+
+  // The most recent finished master, kept so exports need no further copying.
+  let lastMaster = null;
+
+  function fracDelayKernel(d, len) {
+    const k = new Float32Array(len);
+    const center = len / 2 - 1;
+    let sum = 0;
+    for (let i = 0; i < len; i++) {
+      const t = (i - center) - d;
+      const s = Math.abs(t) < 1e-9 ? 1 : Math.sin(Math.PI * t) / (Math.PI * t);
+      const w = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (len - 1)); // Hamming
+      k[i] = s * w;
+      sum += k[i];
+    }
+    for (let i = 0; i < len; i++) k[i] /= sum; // unity DC gain
+    return k;
+  }
+
+  function getTpKernels() {
+    if (!tpKernels) {
+      tpKernels = [];
+      for (let p = 1; p <= TP_PHASES; p++) tpKernels.push(fracDelayKernel(p / (TP_PHASES + 1), TP_LEN));
+      // Worst-case L1 norm over the phases. |interpolated| <= L1 * max|x| across
+      // the kernel's window, which is the bound the scan below is gated on.
+      for (const k of tpKernels) {
+        let s = 0;
+        for (let i = 0; i < k.length; i++) s += Math.abs(k[i]);
+        if (s > tpL1) tpL1 = s;
+      }
+    }
+    return tpKernels;
+  }
+
+  function truePeakL1() { getTpKernels(); return tpL1; }
+
+  // Builds the per-sample linked true-peak envelope into `out`, but only where it
+  // can possibly matter.
+  //
+  // The tempting shortcut is to interpolate only around samples that are already
+  // near the ceiling. That is wrong: content near Nyquist can put a sample close
+  // to a zero crossing while the reconstructed waveform peaks between samples,
+  // and on real program material the true peak turned up ~9 dB above its nearest
+  // sample. So the gate is not on the sample — it is on the maximum across the
+  // whole 24-sample window the kernel actually reads, times the kernel's L1 norm,
+  // which is a hard upper bound on any value the interpolation can produce. A
+  // window under that bound provably cannot reach the ceiling, so skipping it
+  // changes nothing; everything else is scanned exhaustively.
+  //
+  // `refine(gate)` can be called again with a lower gate later (the loudness
+  // match may decide to push harder), and only re-scans the blocks that the
+  // previous, higher gate skipped.
+  function createPeakScan(chans, out) {
+    const n = chans[0].length;
+    const nch = chans.length;
+    for (let i = 0; i < n; i++) {
+      let m = 0;
+      for (let c = 0; c < nch; c++) {
+        const v = chans[c][i];
+        const a = v < 0 ? -v : v;
+        if (a > m) m = a;
+      }
+      out[i] = m;
+    }
+
+    const numBlocks = Math.ceil(n / TP_BLOCK);
+    const blockMax = new Float32Array(numBlocks);
+    for (let b = 0; b < numBlocks; b++) {
+      const s = b * TP_BLOCK, e = Math.min(n, s + TP_BLOCK);
+      let m = 0;
+      for (let i = s; i < e; i++) if (out[i] > m) m = out[i];
+      blockMax[b] = m;
+    }
+
+    const kern = getTpKernels();
+    const k0 = kern[0], k1 = kern[1], k2 = kern[2];
+    const lead = TP_LEN / 2 - 1;
+    const hi = n - (TP_LEN - lead);
+    let covered = Infinity;
+
+    return function refine(gate) {
+      if (gate >= covered) return;
+      for (let b = 0; b < numBlocks; b++) {
+        let i0 = b * TP_BLOCK;
+        let i1 = Math.min(hi, i0 + TP_BLOCK);
+        if (i0 < lead) i0 = lead;
+        if (i0 >= i1) continue;
+        // widest sample range any kernel window inside this block reads
+        const lo = i0 - lead;
+        const hiS = i1 - 1 - lead + TP_LEN - 1;
+        let wm = 0;
+        const bLo = (lo / TP_BLOCK) | 0;
+        const bHi = Math.min(numBlocks - 1, (hiS / TP_BLOCK) | 0);
+        for (let j = bLo; j <= bHi; j++) if (blockMax[j] > wm) wm = blockMax[j];
+        if (wm < gate || wm >= covered) continue;
+        for (let c = 0; c < nch; c++) {
+          const x = chans[c];
+          for (let i = i0; i < i1; i++) {
+            const base = i - lead;
+            // All three phases share one pass over the window, so each sample is
+            // read once and used three times instead of the array being streamed
+            // three separate times. Measured ~2x faster than phase-outer.
+            let a0 = 0, a1 = 0, a2 = 0;
+            for (let t = 0; t < TP_LEN; t++) {
+              const v = x[base + t];
+              a0 += v * k0[t]; a1 += v * k1[t]; a2 += v * k2[t];
+            }
+            if (a0 < 0) a0 = -a0;
+            if (a1 < 0) a1 = -a1;
+            if (a2 < 0) a2 = -a2;
+            if (a1 > a0) a0 = a1;
+            if (a2 > a0) a0 = a2;
+            if (a0 > out[i]) out[i] = a0;
+          }
+        }
+      }
+      covered = gate;
+    };
+  }
+
+  // A fast, sample-gated true-peak ESTIMATE, used only to characterise the source
+  // for the preset recommendation, where being a couple of tenths of a dB shy does
+  // not change anything. Peak control itself uses the scan above.
+  function estimateTruePeak(chans) {
+    const n = chans[0].length;
+    const nch = chans.length;
+    let samplePeak = 0;
+    for (let c = 0; c < nch; c++) {
+      const x = chans[c];
+      for (let i = 0; i < n; i++) {
+        const a = x[i] < 0 ? -x[i] : x[i];
+        if (a > samplePeak) samplePeak = a;
+      }
+    }
+    if (samplePeak === 0) return 0;
+    const candidate = samplePeak * 0.5;
+    const kern = getTpKernels();
+    const k0 = kern[0], k1 = kern[1], k2 = kern[2];
+    const lead = TP_LEN / 2 - 1;
+    let peak = samplePeak;
+    for (let c = 0; c < nch; c++) {
+      const x = chans[c];
+      for (let i = lead; i < n - (TP_LEN - lead); i++) {
+        const a = x[i] < 0 ? -x[i] : x[i];
+        if (a < candidate) continue;
+        const base = i - lead;
+        let a0 = 0, a1 = 0, a2 = 0;
+        for (let t = 0; t < TP_LEN; t++) {
+          const v = x[base + t];
+          a0 += v * k0[t]; a1 += v * k1[t]; a2 += v * k2[t];
+        }
+        if (a0 < 0) a0 = -a0;
+        if (a1 < 0) a1 = -a1;
+        if (a2 < 0) a2 = -a2;
+        if (a1 > a0) a0 = a1;
+        if (a2 > a0) a0 = a2;
+        if (a0 > peak) peak = a0;
+      }
+    }
+    return peak;
+  }
+
+  // ---------- look-ahead true-peak limiter ----------
+  // Rendering offline means the whole gain curve can be built with full knowledge
+  // of the future, so this is a genuine look-ahead limiter with ZERO latency and
+  // zero overshoot: the backward pass lowers the gain along a linear ramp that
+  // arrives at its minimum exactly when the peak does, and the forward pass gives
+  // it a program-dependent dual release (fast + slow, blended) so the recovery
+  // breathes instead of pumping. It limits against the true-peak envelope, not
+  // sample peaks, so the ceiling holds after resampling and lossy encoding too.
+  //
+  // `scale` is the gain the audio will be multiplied by on the way out, so the
+  // envelope never has to be recomputed when the loudness match changes its mind.
+  function buildLimiterGain(env, gain, sr, ceiling, scale) {
+    const n = env.length;
+    for (let i = 0; i < n; i++) {
+      const p = env[i] * scale;
+      gain[i] = p > ceiling ? ceiling / p : 1;
+    }
+
+    // Look-ahead attack: a 3.5 ms linear ramp down into every peak. Because each
+    // step can only rise by 1/look going backwards, the curve is guaranteed to be
+    // at or below the required gain at every single sample — no overshoot is
+    // mathematically possible.
+    const look = Math.max(8, Math.round(sr * 0.0035));
+    const slope = 1 / look;
+    for (let i = n - 2; i >= 0; i--) {
+      const lim = gain[i + 1] + slope;
+      if (gain[i] > lim) gain[i] = lim;
+    }
+
+    // Program-dependent release: short bursts recover fast, sustained loud
+    // passages recover slowly, so the limiter stops "breathing" on every kick.
+    // Both followers stay at or below the required gain, so blending them is safe.
+    const cFast = 1 - Math.exp(-1 / (sr * 0.035));
+    const cSlow = 1 - Math.exp(-1 / (sr * 0.32));
+    let ef = gain[0], es = gain[0];
+    for (let i = 0; i < n; i++) {
+      const t = gain[i];
+      ef = t <= ef ? t : Math.min(t, ef + (1 - ef) * cFast);
+      es = t <= es ? t : Math.min(t, es + (1 - es) * cSlow);
+      gain[i] = 0.5 * ef + 0.5 * es;
+    }
+  }
+
+  // Gain, safety clip and edge fades in a single pass over the samples. These used
+  // to be three separate walks over tens of millions of values; the clip's tanh is
+  // only evaluated in the top tenth of a dB below the ceiling, where it almost
+  // never engages after a correct limiter — it exists so nothing can leave this
+  // app above the declared ceiling without a hard clip's harsh odd-order spray.
+  function finishSamples(chans, gain, scale, ceiling, sr) {
+    const n = chans[0].length;
+    const knee = ceiling * 0.9;
+    const span = ceiling - knee;
+    const fin = Math.min(Math.round(sr * 0.002), n >> 1);
+    const fout = Math.min(Math.round(sr * 0.006), n >> 1);
+    for (let c = 0; c < chans.length; c++) {
+      const x = chans[c];
+      for (let i = 0; i < n; i++) {
+        let v = x[i] * gain[i] * scale;
+        const a = v < 0 ? -v : v;
+        if (a > knee) {
+          const y = knee + span * Math.tanh((a - knee) / span);
+          v = v < 0 ? -y : y;
+        }
+        x[i] = v;
+      }
+      // 2 ms in / 6 ms out, so a master can never start or end on a DC step.
+      for (let i = 0; i < fin; i++) x[i] *= i / fin;
+      for (let i = 0; i < fout; i++) x[n - 1 - i] *= i / fout;
+    }
+  }
+
+  // ---------- spectrum ----------
+  function fftMagnitude(input) {
+    const n = input.length;
+    const re = new Float32Array(n);
+    const im = new Float32Array(n);
+    re.set(input);
+
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        const tr = re[i]; re[i] = re[j]; re[j] = tr;
+        const ti = im[i]; im[i] = im[j]; im[j] = ti;
+      }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = -2 * Math.PI / len;
+      const wr = Math.cos(ang), wi = Math.sin(ang);
+      for (let i = 0; i < n; i += len) {
+        let curWr = 1, curWi = 0;
+        for (let j = 0; j < len / 2; j++) {
+          const ur = re[i+j], ui = im[i+j];
+          const vr = re[i+j+len/2]*curWr - im[i+j+len/2]*curWi;
+          const vi = re[i+j+len/2]*curWi + im[i+j+len/2]*curWr;
+          re[i+j] = ur + vr; im[i+j] = ui + vi;
+          re[i+j+len/2] = ur - vr; im[i+j+len/2] = ui - vi;
+          const nwr = curWr*wr - curWi*wi;
+          const nwi = curWr*wi + curWi*wr;
+          curWr = nwr; curWi = nwi;
+        }
+      }
+    }
+    const mags = new Float32Array(n / 2);
+    for (let i = 0; i < n / 2; i++) mags[i] = Math.sqrt(re[i]*re[i] + im[i]*im[i]);
+    return mags;
+  }
+
+  // Averages the magnitude spectrum across several windows spread through the whole
+  // track (instead of a single snapshot from the middle) — a quiet bridge or a loud
+  // chorus alone isn't representative of the song, so this gives a much more honest
+  // picture of its actual spectral balance, which is what the adaptive tuning is
+  // based on.
+  function computeAveragedSpectrum(data, sr, fftSize, numWindows) {
+    const totalMags = new Float32Array(fftSize / 2);
+    const windowed = new Float32Array(fftSize);
+    const win = new Float32Array(fftSize);
+    for (let i = 0; i < fftSize; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (fftSize - 1));
+    let used = 0;
+    const span = Math.max(1, data.length - fftSize);
+    for (let w = 0; w < numWindows; w++) {
+      const start = Math.floor((w / numWindows) * span);
+      if (start < 0 || start + fftSize > data.length) continue;
+      for (let i = 0; i < fftSize; i++) windowed[i] = data[start + i] * win[i];
+      const mags = fftMagnitude(windowed);
+      for (let i = 0; i < mags.length; i++) totalMags[i] += mags[i];
+      used++;
+    }
+    if (used === 0) {
+      const start = Math.max(0, Math.floor(data.length / 2 - fftSize / 2));
+      for (let i = 0; i < fftSize; i++) windowed[i] = (data[start + i] || 0) * win[i];
+      return fftMagnitude(windowed);
+    }
+    for (let i = 0; i < totalMags.length; i++) totalMags[i] /= used;
+    return totalMags;
+  }
+
+  // How much spectral energy sits in each broad region, as a fraction of the total.
+  // Used to compare this specific song against a "typically balanced" mix, so the
+  // mastering can lean back where the song already has plenty and lean in where
+  // it's thin — instead of applying the same fixed boost regardless of the source.
+  function bandEnergyRatio(mags, sr, fftSize) {
+    const energyInRange = (loHz, hiHz) => {
+      const loBin = Math.max(1, Math.floor(loHz * fftSize / sr));
+      const hiBin = Math.min(mags.length, Math.ceil(hiHz * fftSize / sr));
+      let sum = 0, count = 0;
+      for (let i = loBin; i < hiBin; i++) { sum += mags[i] * mags[i]; count++; }
+      return count ? sum / count : 0;
+    };
+    const bass = energyInRange(30, 250);
+    const lowMid = energyInRange(250, 2000);
+    const highMid = energyInRange(2000, 6000);
+    const air = energyInRange(6000, 16000);
+    const total = bass + lowMid + highMid + air || 1;
+    return {
+      bassRatio: bass / total,
+      lowMidRatio: lowMid / total,
+      highMidRatio: highMid / total,
+      airRatio: air / total,
+    };
+  }
+
+  function spectralCentroid(mags, sr, fftSize) {
+    let num = 0, den = 0;
+    for (let i = 0; i < mags.length; i++) {
+      num += (i * sr / fftSize) * mags[i];
+      den += mags[i];
+    }
+    return den > 0 ? num / den : 0;
+  }
+
+  // ===================== operations =====================
+
+  function analyze(args) {
+    const chans = args.channels;
+    const sr = args.sampleRate;
+    const ch0 = chans[0];
+    const n = ch0.length;
+
+    const lufs = measureLufs(chans, sr);
+    const truePeakDb = 20 * Math.log10(estimateTruePeak(chans) || 1e-12);
+
+    // Crest-style dynamics estimate: true peak against the average level of the
+    // loudest fifth of the track. This is what picks the preset.
+    const blockSize = Math.floor(sr * 0.4);
+    const blockRms = [];
+    for (let i = 0; i + blockSize < n; i += blockSize) {
+      let s = 0;
+      for (let j = i; j < i + blockSize; j++) s += ch0[j] * ch0[j];
+      blockRms.push(Math.sqrt(s / blockSize));
+    }
+    blockRms.sort((a, b) => b - a);
+    const loudest20 = blockRms.length
+      ? blockRms.slice(0, Math.max(1, Math.floor(blockRms.length * 0.2)))
+      : [1e-6];
+    const avgLoud = loudest20.reduce((a, b) => a + b, 0) / loudest20.length;
+    const avgLoudDb = 20 * Math.log10(avgLoud || 1e-12);
+
+    const fftSize = 8192;
+    const spectrum = computeAveragedSpectrum(ch0, sr, fftSize, 16);
+    const balance = bandEnergyRatio(spectrum, sr, fftSize);
+
+    return {
+      result: {
+        lufs: Math.round(lufs * 10) / 10,
+        truePeakDb: Math.round(truePeakDb * 10) / 10,
+        dynamicRange: Math.round(Math.abs(truePeakDb - avgLoudDb) * 10) / 10,
+        centroidHz: Math.round(spectralCentroid(spectrum, sr, fftSize)),
+        duration: n / sr,
+        bassRatio: balance.bassRatio,
+        lowMidRatio: balance.lowMidRatio,
+        highMidRatio: balance.highMidRatio,
+        airRatio: balance.airRatio,
+      },
+    };
+  }
+
+  // Loudness match + true-peak limiting on a rendered chain.
+  //
+  // The audio is written exactly once. Loudness is a pure level measurement and
+  // the true-peak envelope scales linearly with gain, so the render headroom, the
+  // loudness trim and the limiter's own curve are all folded into a single
+  // multiply at the end — instead of walking tens of millions of samples four
+  // separate times to apply them one after another.
+  function finalize(args) {
+    const chans = args.channels;
+    const sr = args.sampleRate;
+    const target = args.targetLufs;
+    const n = chans[0].length;
+    const ceiling = args.ceiling;
+    const headroomGain = 1 / args.renderHeadroom;
+
+    // What the chain produced, corrected for the render headroom analytically.
+    const rawLufs = measureLufs(chans, sr);
+    const unityLufs = rawLufs + 20 * Math.log10(headroomGain);
+
+    // Wide but bounded: enough to lift a genuinely quiet recording onto the
+    // target, not so much that a near-silent file gets blown 40 dB up into its
+    // own noise floor.
+    const trim = Math.pow(10, clamp(target - unityLufs, -14, 24) / 20);
+    let scale = headroomGain * trim;
+
+    const env = new Float32Array(n);
+    const refine = createPeakScan(chans, env);
+    const gain = new Float32Array(n);
+    const L1 = truePeakL1();
+
+    refine(ceiling / (L1 * scale));
+    buildLimiterGain(env, gain, sr, ceiling, scale);
+
+    // Limiting always costs a little loudness. Measure what the limited signal
+    // WOULD be, then close the remaining gap before committing to it.
+    const limited = measureLufs(chans, sr, gain, scale);
+    const delta = clamp(target - limited, -4, 4);
+    if (Math.abs(delta) > 0.2) {
+      scale *= Math.pow(10, delta / 20);
+      // A louder target means a lower effective ceiling in source terms, so the
+      // scan may have to look at blocks it was allowed to skip the first time.
+      refine(ceiling / (L1 * scale));
+      buildLimiterGain(env, gain, sr, ceiling, scale);
+    }
+
+    finishSamples(chans, gain, scale, ceiling, sr);
+
+    // Hand the page a copy and keep the originals here, so exporting does not
+    // have to ship tens of megabytes back across the thread boundary again. The
+    // copy is made on this side, where it costs nobody's frame rate. `id` ties
+    // the cache to one specific master, so a run that was superseded can never
+    // be exported by mistake.
+    const out = chans.map(c => c.slice());
+    lastMaster = { id: args.id, channels: chans, sampleRate: sr };
+    return { result: { channels: out }, transfer: out.map(c => c.buffer) };
+  }
+
+  // Resolves the audio an encode should run on: the cached master when the page
+  // asks for it and the id still matches, otherwise whatever was passed in.
+  function encodeSource(args) {
+    if (args.channels) return args.channels;
+    if (!lastMaster || lastMaster.id !== args.id) throw new Error('stale master cache');
+    return lastMaster.channels;
+  }
+
+  // ---------- encoders ----------
+  function writeString(bytes, offset, str) {
+    for (let i = 0; i < str.length; i++) bytes[offset + i] = str.charCodeAt(i);
+  }
+
+  // Going from 32-bit float to 16-bit integer throws away real information. Doing
+  // it by plain rounding turns that loss into quantization DISTORTION, correlated
+  // with the music and audible as grit on fades and reverb tails. TPDF dither at
+  // 1 LSB before rounding converts it into a steady, uncorrelated, inaudible noise
+  // floor instead — the standard, and the last real quality decision in a chain.
+  function floatTo16BitPCM(channelData) {
+    const n = channelData.length;
+    const out = new Int16Array(n);
+    const lsb = 1 / 32768;
+    for (let i = 0; i < n; i++) {
+      const dither = (Math.random() - Math.random()) * lsb; // TPDF, peak ±1 LSB
+      let s = channelData[i] + dither;
+      if (s > 1) s = 1; else if (s < -1) s = -1;
+      const q = Math.round(s < 0 ? s * 0x8000 : s * 0x7FFF);
+      out[i] = q > 32767 ? 32767 : (q < -32768 ? -32768 : q);
+    }
+    return out;
+  }
+
+  // WAV export is 24-bit by default. The master lives in 32-bit float internally,
+  // and squeezing it into 16 bits at the very last step was throwing away ~48 dB
+  // of usable floor for no reason — 24-bit is what you would hand to a distributor
+  // or take into another DAW, and it needs no dither at all.
+  //
+  // Samples are written straight into a Uint8Array rather than through a DataView:
+  // for 24-bit that is three bounds-checked calls per sample replaced by three
+  // plain stores, which is most of the encoding time on a long track.
+  function encodeWav(args) {
+    const chans = encodeSource(args);
+    const sampleRate = args.sampleRate;
+    const bitDepth = args.bitDepth === 16 ? 16 : 24;
+    const numChannels = chans.length;
+    const numFrames = chans[0].length;
+    const bytesPerSample = bitDepth === 16 ? 2 : 3;
+    const blockAlign = numChannels * bytesPerSample;
+    const dataSize = numFrames * blockAlign;
+
+    const arrBuf = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(arrBuf);
+    const bytes = new Uint8Array(arrBuf);
+
+    writeString(bytes, 0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(bytes, 8, 'WAVE');
+    writeString(bytes, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * blockAlign, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitDepth, true);
+    writeString(bytes, 36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    const src = bitDepth === 16 ? chans.map(floatTo16BitPCM) : chans;
+    const c0 = src[0], c1 = numChannels > 1 ? src[1] : null;
+    let o = 44;
+
+    if (bitDepth === 16) {
+      const out = new Int16Array(arrBuf, 44, numFrames * numChannels);
+      if (numChannels === 1) out.set(c0);
+      else if (numChannels === 2) {
+        for (let i = 0, j = 0; i < numFrames; i++) { out[j++] = c0[i]; out[j++] = c1[i]; }
+      } else {
+        for (let i = 0, j = 0; i < numFrames; i++)
+          for (let c = 0; c < numChannels; c++) out[j++] = src[c][i];
+      }
+    } else if (numChannels === 2) {
+      for (let i = 0; i < numFrames; i++) {
+        let s = c0[i];
+        s = s > 1 ? 1 : (s < -1 ? -1 : s);
+        let v = Math.round(s < 0 ? s * 0x800000 : s * 0x7FFFFF);
+        if (v < 0) v += 0x1000000;
+        bytes[o] = v & 0xFF; bytes[o + 1] = (v >> 8) & 0xFF; bytes[o + 2] = (v >> 16) & 0xFF;
+        s = c1[i];
+        s = s > 1 ? 1 : (s < -1 ? -1 : s);
+        v = Math.round(s < 0 ? s * 0x800000 : s * 0x7FFFFF);
+        if (v < 0) v += 0x1000000;
+        bytes[o + 3] = v & 0xFF; bytes[o + 4] = (v >> 8) & 0xFF; bytes[o + 5] = (v >> 16) & 0xFF;
+        o += 6;
+      }
+    } else {
+      for (let i = 0; i < numFrames; i++) {
+        for (let c = 0; c < numChannels; c++) {
+          let s = src[c][i];
+          s = s > 1 ? 1 : (s < -1 ? -1 : s);
+          let v = Math.round(s < 0 ? s * 0x800000 : s * 0x7FFFFF);
+          if (v < 0) v += 0x1000000;
+          bytes[o] = v & 0xFF; bytes[o + 1] = (v >> 8) & 0xFF; bytes[o + 2] = (v >> 16) & 0xFF;
+          o += 3;
+        }
+      }
+    }
+    return { result: { buffer: arrBuf }, transfer: [arrBuf] };
+  }
+
+  // Loads the lamejs bundle into whatever context this is running in, so MP3
+  // encoding can happen off the main thread as well.
+  function initMp3(args) {
+    const g = typeof self !== 'undefined' ? self : this;
+    if (g.lamejs) return { result: { ok: true } };
+    if (typeof importScripts === 'function' && typeof Blob !== 'undefined') {
+      const url = URL.createObjectURL(new Blob([args.source], { type: 'application/javascript' }));
+      try { importScripts(url); } finally { URL.revokeObjectURL(url); }
+    }
+    return { result: { ok: !!g.lamejs } };
+  }
+
+  // Encodes with lamejs (pure JS port of LAME) — a genuine MP3 file, not just a
+  // renamed WAV. The raw frames come back without a tag; the page prepends the
+  // ID3v2 header with the artist and cover art.
+  function encodeMp3(args) {
+    const g = typeof self !== 'undefined' ? self : this;
+    const lame = g.lamejs;
+    if (!lame) throw new Error('mp3 encoder unavailable');
+    const chans = encodeSource(args);
+    const numChannels = chans.length;
+    const encoder = new lame.Mp3Encoder(numChannels, args.sampleRate, args.kbps || 192);
+
+    const left = floatTo16BitPCM(chans[0]);
+    const right = numChannels > 1 ? floatTo16BitPCM(chans[1]) : null;
+
+    const blockSize = 1152;
+    const chunks = [];
+    let total = 0;
+    for (let i = 0; i < left.length; i += blockSize) {
+      const l = left.subarray(i, i + blockSize);
+      const buf = right ? encoder.encodeBuffer(l, right.subarray(i, i + blockSize)) : encoder.encodeBuffer(l);
+      if (buf.length > 0) { chunks.push(buf); total += buf.length; }
+    }
+    const tail = encoder.flush();
+    if (tail.length > 0) { chunks.push(tail); total += tail.length; }
+
+    const out = new Uint8Array(total);
+    let o = 0;
+    for (const c of chunks) { out.set(c, o); o += c.length; }
+    return { result: { buffer: out.buffer }, transfer: [out.buffer] };
+  }
+
+  function ping() { return { result: { ok: true } }; }
+
+  return { ping, analyze, finalize, encodeWav, encodeMp3, initMp3 };
+}
+
+// Worker entry point. In the in-page fallback this block simply does not run.
+if (typeof importScripts === 'function' && typeof self !== 'undefined') {
+  const dsp = createSignalDsp();
+  self.onmessage = function (e) {
+    const { id, op, args } = e.data;
+    try {
+      const out = dsp[op](args);
+      self.postMessage({ id, ok: true, result: out.result }, out.transfer || []);
+    } catch (err) {
+      self.postMessage({ id, ok: false, error: (err && err.message) || String(err) });
+    }
+  };
+}
+</script>
 <script>
 (() => {
   const dropzone = document.getElementById('dropzone');
@@ -304,7 +1048,7 @@
   let analysisData = null;
   let currentPreset = null;
   let currentIntensity = 0.65;
-  let playingSource = null;
+  let playGraph = null;  // { orig, master, sources[], gains[], startedAt }
   let playMode = 'orig'; // 'orig' | 'mastered'
   let isPlaying = false;
   let playStartedAt = 0;
@@ -312,18 +1056,114 @@
   // Cover art + artist tag embedded into exports that support metadata (MP3, M4A).
   const EXPORT_ARTIST = 'yeditor';
   const COVER_ART_BASE64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAQDAwQDAwQEAwQFBAQFBgoHBgYGBg0JCggKDw0QEA8NDw4RExgUERIXEg4PFRwVFxkZGxsbEBQdHx0aHxgaGxr/2wBDAQQFBQYFBgwHBwwaEQ8RGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhr/wAARCAKAAoADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD4Pooor6wzCiiigAooooAKKBRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUUAFFFFABRRTlRmOFBJ9qTaW4DaMVeg0m5nK/u9qkZDNWnbaDEhzcOXweg4rGVenHqF0jn1UscKCT6AVeg0i6nx8mwEZy3FdJDaw24xDGqe+OanHrXFPGPaKI5jHttAiQ5mYyegHFaMNpFb8RRqg68VYxijiuKVWct2TdibaUDmlpM1mIWiiimAUUZooA4OiiivpDYKKKKACiiigAHeikpaACiiigAooooAKKKKACiiikgCiiigAooopgFFIaTvQA6iiigApKWigAooooAKKKBQAUUUUAFFFFABRRRQAUUUUAFFFFABRRRQAUUUZoAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAoopQCTgcn0pXsAlFXINMuZwCkZAPQtxWnBoCgAzuxOM4X1rGVenDdhdIwgpY/KM/QVdg0i5nGdm0dctxXSQWUVuB5KBce3NTYrjnjP5SXIx4NAiXJmcuc8Y4rRhs4bcDyYwpAxnvVjtS5rilWnPdk3Y0DFOzmkoFYkikDikNOzTT1oAU9KSlxS0AIAaCKWigBtL1paKAEIpKdSYpgcJRRRX0psFFFFABRRRQAg60tFFABRRRQAUUUUAFFFFABRRRSQBRRRQAUUUUwCk70tJ3oAWiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKTFLRQAUUUnNAC0UgpaACiiigAooooAKKKKACirdvp1zc58uMgYzk1pQaANoM8hyecKOlYzrQhuwbSMMAsQFGSewq1Bptxc/wCrjIGM5PFdNb2MFtjyo1BHcjJqxtx7Vxzxn8qI5jEh0BcAzyE9OFFakNnBD/q4lHPHGSKs0CuGdac92S2xDwKUc0CjFYiDNJilxS0AJikp1IBQAmKXFLRTAQUtGKKEAUUUUAFHNFFIAooHSinsAUUUn40XA4SiiivpTYKKKKACiiigBB1paKKACiiigAooooAKKKKACiiikgCiiigAooopgFN706k70ALRRRQAUUUUAFFFFABRRRQAUUUUAFFFFACZpaKKACiiigAooooAKKKKACiiigAooooAKKKKACkpaKAAc0VJDbTTEiKNmI9BWpBoMjEG4baPQdaxlVhDdhdIx+1Tw2c85xFGzepx0rpYNKtoBkR729W71dVQBgcVxzxi+yiXI56DQZGAadwuDyo64rUg0q2gPCbjjqau0ZxXHOvUn1JbFC4HHBzzilAwaA3FGawvckMc0tIDRmkAuBScUtFABRRRTAKKQ9RQTikAtFFFMAooooAKKKTNIBaKQdKWmAUnWlopAFFFIDzQAZozT1iZzwpNTpYk8ucewqXJItQkzzqiiivqCwooooAKKKKAE7mlpKWgAooooAKKKKACiiig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';
-  let fineAnalysisToken = 0;
+  let masterToken = 0;
 
   // The finished master, rendered once. Preview and export both play/encode THIS
   // buffer, so what you hear in the A/B is bit-for-bit what lands in the file.
   let masteredBuffer = null;
+  let masteredBufferId = 0;  // ties the page's master to the worker's cached copy
+  let masterAudioSeq = 0;
+  let masterRun = null;      // in-flight mastering promise, if any
+  let speculativeTimer = null;
 
-  // The offline graph is rendered with headroom and multiplied back out in JS, so
-  // the destination node can never be handed a sample outside ±1.0 no matter how
-  // hard a preset pushes. All real peak control happens in the limiter below.
+  // The offline graph is rendered with headroom and multiplied back out in the
+  // DSP core, so the destination node can never be handed a sample outside ±1.0
+  // no matter how hard a preset pushes. All real peak control is done there.
   const RENDER_HEADROOM = 0.5;
 
   const clamp = (v, lo, hi) => v < lo ? lo : (v > hi ? hi : v);
+
+  // ================================================================
+  //  DSP worker client
+  // ================================================================
+  // The heavy number crunching lives in signalDspSource and runs in a Worker, so
+  // a multi-minute master never blocks the UI or the audio thread. If Workers or
+  // blob URLs are unavailable the same source is instantiated in-page instead —
+  // slower to sit through, but identical output.
+  const dsp = (() => {
+    const source = document.getElementById('signalDspSource').textContent;
+    let worker = null;
+    let inline = null;
+    let seq = 0;
+    const pending = new Map();
+
+    try {
+      const url = URL.createObjectURL(new Blob([source], { type: 'application/javascript' }));
+      worker = new Worker(url);
+      worker.onmessage = e => {
+        const entry = pending.get(e.data.id);
+        if (!entry) return;
+        pending.delete(e.data.id);
+        if (e.data.ok) entry.resolve(e.data.result);
+        else entry.reject(new Error(e.data.error));
+      };
+      worker.onerror = () => {
+        for (const entry of pending.values()) entry.reject(new Error('dsp worker failed'));
+        pending.clear();
+        worker = null;
+      };
+    } catch (err) {
+      worker = null;
+    }
+
+    function localDsp() {
+      if (!inline) inline = new Function(source + '\nreturn createSignalDsp();')();
+      return inline;
+    }
+
+    function post(op, args, transfer) {
+      return new Promise((resolve, reject) => {
+        const id = ++seq;
+        pending.set(id, { resolve, reject });
+        worker.postMessage({ id, op, args }, transfer || []);
+      });
+    }
+
+    // A Worker built from a blob URL is blocked on some origins — opening this
+    // file straight off disk (file://) is the common one. The constructor still
+    // succeeds there and the failure only surfaces asynchronously, so the worker
+    // is proven with a round-trip before anything is handed to it. Transferable
+    // buffers are detached by postMessage and cannot be re-sent, which is why
+    // this has to be settled up front rather than retried after a failure.
+    let probe = null;
+    function workerReady() {
+      if (!probe) {
+        probe = worker
+          ? new Promise(resolve => {
+              const timer = setTimeout(() => resolve(false), 4000);
+              post('ping', {}).then(
+                () => { clearTimeout(timer); resolve(true); },
+                () => { clearTimeout(timer); resolve(false); }
+              );
+            })
+          : Promise.resolve(false);
+      }
+      return probe;
+    }
+
+    return {
+      get offThread() { return !!worker; },
+      async call(op, args, transfer) {
+        if (await workerReady()) return post(op, args, transfer);
+        // Inline fallback: yield first so the spinner at least gets painted.
+        await wait(0);
+        return localDsp()[op](args).result;
+      },
+    };
+  })();
+
+  // Detached copies of a buffer's channels, ready to hand to the worker. The
+  // copy is unavoidable (an AudioBuffer's storage cannot be transferred out from
+  // under it) but it is a plain memcpy against seconds of DSP.
+  function copyChannels(buffer) {
+    const out = [];
+    for (let c = 0; c < buffer.numberOfChannels; c++) out.push(buffer.getChannelData(c).slice());
+    return out;
+  }
+
+  function transferListOf(channels) {
+    return channels.map(ch => ch.buffer);
+  }
 
   // ---------- Presets ----------
   // Four mastering styles, each pushed as far as it can go while staying musical.
@@ -451,44 +1291,63 @@
       el.classList.toggle('active', el.dataset.id === id);
     });
     targetLufsEl.textContent = `${currentPreset.targetLufs} LUFS`;
+    scheduleSpeculativeMaster();
   }
 
   // Any change to preset or intensity invalidates the rendered master — it gets
   // rebuilt on the next "Master →", never silently reused.
   function invalidateMaster() {
-    fineAnalysisToken++;
+    masterToken++;
     masteredBuffer = null;
-    if (playMode === 'mastered') {
-      playMode = 'orig';
-      btnOrig.classList.add('active');
-      btnMastered.classList.remove('active');
-    }
+    clearTimeout(speculativeTimer);
+    if (playMode === 'mastered') setPlayMode('orig');
+  }
+
+  // While the style screen is up the machine is otherwise idle, so start
+  // mastering the current selection in the background. If the choice still
+  // stands when "Master →" is pressed the result is already waiting and the
+  // click is instant; if it changed, the token check throws the work away.
+  //
+  // The delay matters: it is long enough that someone clicking through the four
+  // styles never kicks off four renders, short enough to usually be finished by
+  // the time they have decided.
+  function scheduleSpeculativeMaster() {
+    clearTimeout(speculativeTimer);
+    if (!originalBuffer || !currentPreset) return;
+    speculativeTimer = setTimeout(() => {
+      if (masteredBuffer || masterRun) return;
+      startMasterRun(null).catch(() => {});
+    }, 600);
+  }
+
+  function selectionKey() {
+    return currentPreset ? currentPreset.id + '@' + currentIntensity : null;
   }
 
   intensitySlider.addEventListener('input', () => {
     currentIntensity = intensitySlider.value / 100;
     intensityVal.textContent = intensitySlider.value + '%';
     invalidateMaster();
+    scheduleSpeculativeMaster();
   });
 
   confirmPresetBtn.addEventListener('click', async () => {
     if (!currentPreset) return;
-    // Nothing changed since the last master? Then there is nothing to recompute.
     if (masteredBuffer) { showOnly(resultSection); return; }
     showOnly(loadingSection);
     loadingText.textContent = 'Mastering …';
-    await wait(50);
     const started = Date.now();
-    const ok = await runMastering(msg => { loadingText.textContent = msg; });
-    if (!ok) return;
+    const ok = await ensureMaster(msg => { loadingText.textContent = msg; });
+    if (!ok || !masteredBuffer) return;
     const elapsed = Date.now() - started;
-    if (elapsed < 400) await wait(400 - elapsed);
+    if (elapsed < 320) await wait(320 - elapsed);
     showOnly(resultSection);
   });
 
   backToPresetBtn.addEventListener('click', () => {
     stopPlayback();
     showOnly(presetSection);
+    scheduleSpeculativeMaster();
   });
 
   // ---------- File handling ----------
@@ -515,15 +1374,14 @@
   }
 
   function resetAll() {
-    stopPlayback();
+    stopPlayback(true);
     originalBuffer = null;
     analysisData = null;
     currentPreset = null;
     masteredBuffer = null;
-    fineAnalysisToken++;
-    playMode = 'orig';
-    btnOrig.classList.add('active');
-    btnMastered.classList.remove('active');
+    masterToken++;
+    clearTimeout(speculativeTimer);
+    setPlayMode('orig');
     filebar.classList.remove('show');
     showOnly(null);
     document.querySelectorAll('.preset').forEach(el => el.classList.remove('active'));
@@ -547,10 +1405,14 @@
 
     loadingText.textContent = 'Analyzing your track …';
     showOnly(loadingSection);
-    await wait(50); // let the loading screen actually paint before the analysis runs
 
     const started = Date.now();
-    analysisData = analyzeBuffer(originalBuffer);
+    const channels = copyChannels(originalBuffer);
+    analysisData = await dsp.call(
+      'analyze',
+      { channels, sampleRate: originalBuffer.sampleRate },
+      transferListOf(channels)
+    );
     const elapsed = Date.now() - started;
     const floor = 400; // just enough to avoid a jarring instant flash, not padding
     if (elapsed < floor) await wait(floor - elapsed);
@@ -560,461 +1422,11 @@
   }
 
   // ================================================================
-  //  METERING
+  //  ANALYSIS-DRIVEN TUNING
   // ================================================================
-  // Everything downstream (loudness matching, the limiter, the adaptive tuning)
-  // is only as good as the measurement it is based on, so the meters here are
-  // the real standards-track ones rather than rough approximations:
-  //   * ITU-R BS.1770-4 K-weighting as actual biquads, derived for the file's
-  //     own sample rate (the old single-pole RC approximation was several dB off
-  //     in places, which quietly dragged the whole loudness match with it).
-  //   * Gated LUFS with both the absolute (-70 LUFS) and relative (-10 LU) gates.
-  //   * True peak (dBTP) via 4x band-limited interpolation, not sample peak —
-  //     sample peak simply does not see the inter-sample overshoots that make a
-  //     master distort on consumer DACs and lossy codecs.
-
-  function biquadState() { return { x1: 0, x2: 0, y1: 0, y2: 0 }; }
-
-  // Generic direct-form-I biquad. Carries its state across calls so a long track
-  // can be filtered in small chunks instead of allocating a full-length copy of it.
-  function runBiquad(input, out, c, state, len) {
-    const n = len === undefined ? input.length : len;
-    let { x1, x2, y1, y2 } = state;
-    const { b0, b1, b2, a1, a2 } = c;
-    for (let i = 0; i < n; i++) {
-      const x = input[i];
-      const y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-      x2 = x1; x1 = x;
-      y2 = y1; y1 = y;
-      out[i] = y;
-    }
-    state.x1 = x1; state.x2 = x2; state.y1 = y1; state.y2 = y2;
-    return out;
-  }
-
-  // BS.1770-4 stage 1: the "head effect" high shelf (+4 dB above ~1.5 kHz).
-  function kWeightShelf(fs) {
-    const f0 = 1681.974450955533;
-    const G  = 3.999843853973347;
-    const Q  = 0.7071752369554196;
-    const K  = Math.tan(Math.PI * f0 / fs);
-    const Vh = Math.pow(10, G / 20);
-    const Vb = Math.pow(Vh, 0.4996667741545416);
-    const d  = 1 + K / Q + K * K;
-    return {
-      b0: (Vh + Vb * K / Q + K * K) / d,
-      b1: 2 * (K * K - Vh) / d,
-      b2: (Vh - Vb * K / Q + K * K) / d,
-      a1: 2 * (K * K - 1) / d,
-      a2: (1 - K / Q + K * K) / d,
-    };
-  }
-
-  // BS.1770-4 stage 2: the RLB high-pass (~38 Hz), which is what stops sub-bass
-  // rumble from counting as loudness.
-  function kWeightHighpass(fs) {
-    const f0 = 38.13547087602444;
-    const Q  = 0.5003270373238773;
-    const K  = Math.tan(Math.PI * f0 / fs);
-    const d  = 1 + K / Q + K * K;
-    return {
-      b0: 1, b1: -2, b2: 1,
-      a1: 2 * (K * K - 1) / d,
-      a2: (1 - K / Q + K * K) / d,
-    };
-  }
-
-  function channelsOf(buffer) {
-    const chans = [];
-    for (let c = 0; c < buffer.numberOfChannels; c++) chans.push(buffer.getChannelData(c));
-    return chans;
-  }
-
-  function scaleChannels(chans, g) {
-    if (g === 1) return;
-    for (let c = 0; c < chans.length; c++) {
-      const x = chans[c];
-      for (let i = 0; i < x.length; i++) x[i] *= g;
-    }
-  }
-
-  // Gated loudness per BS.1770-4. Channel powers are SUMMED (each with weight 1.0
-  // for L/R), not averaged — averaging is a 3 dB error that used to make every
-  // master land 3 dB hotter than the preset actually asked for.
-  //
-  // Optionally measures the track as if a gain curve were applied to it (`gain` /
-  // `gainScale`), which lets the limiter's effect on loudness be measured without
-  // ever materialising a second copy of the audio.
-  function measureLufsChannels(chans, sr, gain, gainScale) {
-    const n = chans[0].length;
-    const hop = Math.max(1, Math.round(sr * 0.1));
-    const blockSize = hop * 4;               // 400 ms, and exactly 4 hops
-    const numHops = Math.floor(n / hop);
-    if (numHops < 4) return -70;
-    const numBlocks = numHops - 3;           // 75% overlap, for free
-
-    const shelf = kWeightShelf(sr);
-    const hp = kWeightHighpass(sr);
-    const chunk = new Float32Array(hop);
-    const hopSum = new Float64Array(numHops);
-    const power = new Float64Array(numBlocks);
-    const a = gainScale === undefined ? 1 : gainScale;
-
-    for (let c = 0; c < chans.length; c++) {
-      const x = chans[c];
-      const s1 = biquadState(), s2 = biquadState();
-      for (let h = 0; h < numHops; h++) {
-        const off = h * hop;
-        if (gain) for (let i = 0; i < hop; i++) chunk[i] = x[off + i] * gain[off + i] * a;
-        else      for (let i = 0; i < hop; i++) chunk[i] = x[off + i];
-        runBiquad(chunk, chunk, shelf, s1);
-        runBiquad(chunk, chunk, hp, s2);
-        let sum = 0;
-        for (let i = 0; i < hop; i++) sum += chunk[i] * chunk[i];
-        hopSum[h] = sum;
-      }
-      for (let b = 0; b < numBlocks; b++) {
-        power[b] += (hopSum[b] + hopSum[b + 1] + hopSum[b + 2] + hopSum[b + 3]) / blockSize;
-      }
-    }
-
-    const toLufs = p => -0.691 + 10 * Math.log10(p > 0 ? p : 1e-12);
-
-    // Absolute gate: drop anything below -70 LUFS (silence / room tone).
-    const absGated = [];
-    for (let b = 0; b < numBlocks; b++) if (toLufs(power[b]) > -70) absGated.push(power[b]);
-    if (!absGated.length) return -70;
-
-    // Relative gate: drop anything more than 10 LU below the ungated mean.
-    let mean = 0;
-    for (let i = 0; i < absGated.length; i++) mean += absGated[i];
-    mean /= absGated.length;
-    const relThresh = toLufs(mean) - 10;
-    const relGated = absGated.filter(p => toLufs(p) > relThresh);
-    const finalSet = relGated.length ? relGated : absGated;
-
-    let gated = 0;
-    for (let i = 0; i < finalSet.length; i++) gated += finalSet[i];
-    return toLufs(gated / finalSet.length);
-  }
-
-  // ---- True peak (dBTP) -------------------------------------------------
-  // 4x oversampling via band-limited (windowed-sinc) fractional-delay kernels,
-  // evaluated over EVERY sample.
-  //
-  // The tempting optimisation here is to only interpolate around samples that are
-  // already near the ceiling. It is also wrong: content near Nyquist can put a
-  // sample close to a zero crossing while the reconstructed waveform peaks between
-  // samples, and measured on real program material the true peak turned up ~9 dB
-  // above the nearest sample. Gating the search on sample level silently misses
-  // exactly the peaks a ceiling exists to stop, so the scan is exhaustive.
-  const TP_LEN = 24;   // taps per polyphase branch
-  const TP_PHASES = 3; // offsets 0.25 / 0.50 / 0.75 (the sample itself covers 0.0)
-
-  // Small guard under the declared ceiling. 4x oversampling is what BS.1770-4
-  // itself specifies and it still reads a touch low against a 32x reference
-  // (measured here: within 0.08 dB with these kernels), and the limiter's gain
-  // curve is not perfectly constant across a kernel span. The guard covers both,
-  // so a master that says -1.0 dBTP really does measure at or below -1.0 dBTP on
-  // a stricter meter than this one.
-  const TP_GUARD = Math.pow(10, -0.3 / 20);
-  let tpKernels = null;
-
-  function fracDelayKernel(d, len) {
-    const k = new Float32Array(len);
-    const center = len / 2 - 1;
-    let sum = 0;
-    for (let i = 0; i < len; i++) {
-      const t = (i - center) - d;
-      const s = Math.abs(t) < 1e-9 ? 1 : Math.sin(Math.PI * t) / (Math.PI * t);
-      const w = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (len - 1)); // Hamming
-      k[i] = s * w;
-      sum += k[i];
-    }
-    for (let i = 0; i < len; i++) k[i] /= sum; // unity DC gain
-    return k;
-  }
-
-  function getTpKernels() {
-    if (!tpKernels) {
-      tpKernels = [];
-      for (let p = 1; p <= TP_PHASES; p++) tpKernels.push(fracDelayKernel(p / (TP_PHASES + 1), TP_LEN));
-    }
-    return tpKernels;
-  }
-
-  // Per-sample linked (max across channels) true-peak magnitude, written into `out`.
-  function truePeakEnvelope(chans, out) {
-    const n = chans[0].length;
-    const nch = chans.length;
-    for (let i = 0; i < n; i++) {
-      let m = 0;
-      for (let c = 0; c < nch; c++) {
-        const v = chans[c][i];
-        const a = v < 0 ? -v : v;
-        if (a > m) m = a;
-      }
-      out[i] = m;
-    }
-    const kern = getTpKernels();
-    const lead = TP_LEN / 2 - 1;
-    const hi = n - (TP_LEN - lead);
-    // Phase-outer / sample-inner: the 24 kernel taps stay hot while the audio
-    // streams past, which is roughly twice as fast as the other way round.
-    for (let c = 0; c < nch; c++) {
-      const x = chans[c];
-      for (let p = 0; p < kern.length; p++) {
-        const k = kern[p];
-        for (let i = lead; i < hi; i++) {
-          const b = i - lead;
-          let acc = 0;
-          for (let t = 0; t < TP_LEN; t++) acc += x[b + t] * k[t];
-          if (acc < 0) acc = -acc;
-          if (acc > out[i]) out[i] = acc;
-        }
-      }
-    }
-  }
-
-  // A fast, sample-gated true-peak ESTIMATE. Only used to characterise the source
-  // for the preset recommendation, where being a couple of tenths of a dB shy does
-  // not change anything. Peak control itself uses the exhaustive scan above.
-  function estimateTruePeak(chans) {
-    const n = chans[0].length;
-    const nch = chans.length;
-    let samplePeak = 0;
-    for (let c = 0; c < nch; c++) {
-      const x = chans[c];
-      for (let i = 0; i < n; i++) {
-        const a = x[i] < 0 ? -x[i] : x[i];
-        if (a > samplePeak) samplePeak = a;
-      }
-    }
-    if (samplePeak === 0) return 0;
-    const candidate = samplePeak * 0.5;
-    const kern = getTpKernels();
-    const lead = TP_LEN / 2 - 1;
-    let peak = samplePeak;
-    for (let c = 0; c < nch; c++) {
-      const x = chans[c];
-      for (let i = lead; i < n - (TP_LEN - lead); i++) {
-        const a = x[i] < 0 ? -x[i] : x[i];
-        if (a < candidate) continue;
-        const b = i - lead;
-        for (let p = 0; p < kern.length; p++) {
-          const k = kern[p];
-          let acc = 0;
-          for (let t = 0; t < TP_LEN; t++) acc += x[b + t] * k[t];
-          if (acc < 0) acc = -acc;
-          if (acc > peak) peak = acc;
-        }
-      }
-    }
-    return peak;
-  }
-
-  // ================================================================
-  //  TRUE-PEAK LOOK-AHEAD LIMITER
-  // ================================================================
-  // Web Audio's DynamicsCompressor was doing the limiting before. It is a fine
-  // compressor and a poor limiter: it overshoots, it cannot see a transient
-  // coming, and it knows nothing about inter-sample peaks — which is exactly the
-  // combination that makes a loud master crackle once it has been through an MP3
-  // or AAC encoder.
-  //
-  // Rendering offline means the whole gain curve can be built with full knowledge
-  // of the future, so this is a genuine look-ahead limiter with ZERO latency and
-  // zero overshoot: the backward pass lowers the gain along a linear ramp that
-  // arrives at its minimum exactly when the peak does, and the forward pass gives
-  // it a program-dependent dual release (fast + slow, blended) so the recovery
-  // breathes instead of pumping. It limits against the true-peak envelope, not
-  // sample peaks, so the ceiling holds after resampling and lossy encoding too.
-  // Builds the limiter's gain curve for the envelope `env` scaled by `a`, writing a
-  // normalised (<= 1) curve into `gain`. Separating "measure the peaks" from "work
-  // out the gain" means the expensive true-peak scan happens once per master, no
-  // matter how many gain trials the loudness match needs.
-  function buildLimiterGain(env, gain, sr, ceiling, a) {
-    const n = env.length;
-    for (let i = 0; i < n; i++) {
-      const p = env[i] * a;
-      gain[i] = p > ceiling ? ceiling / p : 1;
-    }
-
-    // Look-ahead attack: a 3.5 ms linear ramp down into every peak. Because each
-    // step can only rise by 1/look going backwards, the curve is guaranteed to be
-    // at or below the required gain at every single sample — no overshoot is
-    // mathematically possible.
-    const look = Math.max(8, Math.round(sr * 0.0035));
-    const slope = 1 / look;
-    for (let i = n - 2; i >= 0; i--) {
-      const lim = gain[i + 1] + slope;
-      if (gain[i] > lim) gain[i] = lim;
-    }
-
-    // Program-dependent release: short bursts recover fast, sustained loud
-    // passages recover slowly, so the limiter stops "breathing" on every kick.
-    // Both followers stay at or below the required gain, so blending them is safe.
-    const cFast = 1 - Math.exp(-1 / (sr * 0.035));
-    const cSlow = 1 - Math.exp(-1 / (sr * 0.32));
-    let ef = gain[0], es = gain[0];
-    for (let i = 0; i < n; i++) {
-      const t = gain[i];
-      ef = t <= ef ? t : Math.min(t, ef + (1 - ef) * cFast);
-      es = t <= es ? t : Math.min(t, es + (1 - es) * cSlow);
-      gain[i] = 0.5 * ef + 0.5 * es;
-    }
-  }
-
-  function applyLimiterGain(chans, gain, a) {
-    for (let c = 0; c < chans.length; c++) {
-      const x = chans[c];
-      for (let i = 0; i < x.length; i++) x[i] *= gain[i] * a;
-    }
-  }
-
-  // Final safety net above the limiter: a smooth, asymptotic soft knee in the top
-  // 10% below the ceiling. After a correct look-ahead limiter it barely engages,
-  // which is the point — it exists so nothing can ever leave this app above the
-  // declared ceiling, without a hard clip's harsh odd-order spray.
-  function softClipCeiling(chans, ceiling) {
-    const knee = ceiling * 0.9;
-    const span = ceiling - knee;
-    for (let c = 0; c < chans.length; c++) {
-      const x = chans[c];
-      for (let i = 0; i < x.length; i++) {
-        const v = x[i];
-        const a = v < 0 ? -v : v;
-        if (a <= knee) continue;
-        const y = knee + span * Math.tanh((a - knee) / span);
-        x[i] = v < 0 ? -y : y;
-      }
-    }
-  }
-
-  // 2 ms in / 6 ms out, so a master can never start or end on a DC step (a click).
-  function applyEdgeFades(chans, sr) {
-    const n = chans[0].length;
-    const fin = Math.min(Math.round(sr * 0.002), n >> 1);
-    const fout = Math.min(Math.round(sr * 0.006), n >> 1);
-    for (let c = 0; c < chans.length; c++) {
-      const x = chans[c];
-      for (let i = 0; i < fin; i++) x[i] *= i / fin;
-      for (let i = 0; i < fout; i++) x[n - 1 - i] *= i / fout;
-    }
-  }
-
-  // ================================================================
-  //  ANALYSIS (drives preset recommendation + adaptive tuning)
-  // ================================================================
-  function analyzeBuffer(buffer) {
-    const sr = buffer.sampleRate;
-    const chans = channelsOf(buffer);
-    const ch0 = chans[0];
-    const n = ch0.length;
-
-    const lufs = measureLufsChannels(chans, sr);
-    const truePeakDb = 20 * Math.log10(estimateTruePeak(chans) || 1e-12);
-
-    // Crest-style dynamics estimate: true peak against the average level of the
-    // loudest fifth of the track. This is what picks the preset, so it stays the
-    // same measure it always was.
-    const blockSize = Math.floor(sr * 0.4);
-    const blockRms = [];
-    for (let i = 0; i + blockSize < n; i += blockSize) {
-      let s = 0;
-      for (let j = i; j < i + blockSize; j++) s += ch0[j] * ch0[j];
-      blockRms.push(Math.sqrt(s / blockSize));
-    }
-    blockRms.sort((a, b) => b - a);
-    const loudest20 = blockRms.length
-      ? blockRms.slice(0, Math.max(1, Math.floor(blockRms.length * 0.2)))
-      : [1e-6];
-    const avgLoud = loudest20.reduce((a, b) => a + b, 0) / loudest20.length;
-    const avgLoudDb = 20 * Math.log10(avgLoud || 1e-12);
-    const dynamicRange = Math.abs(truePeakDb - avgLoudDb);
-
-    const fftSize = 8192;
-    const spectrum = computeAveragedSpectrum(ch0, sr, fftSize, 16);
-    const centroid = spectralCentroid(spectrum, sr, fftSize);
-    const balance = bandEnergyRatio(spectrum, sr, fftSize);
-
-    return {
-      lufs: Math.round(lufs * 10) / 10,
-      truePeakDb: Math.round(truePeakDb * 10) / 10,
-      dynamicRange: Math.round(dynamicRange * 10) / 10,
-      centroidHz: Math.round(centroid),
-      duration: buffer.duration,
-      bassRatio: balance.bassRatio,
-      lowMidRatio: balance.lowMidRatio,
-      highMidRatio: balance.highMidRatio,
-      airRatio: balance.airRatio,
-    };
-  }
-
-  function computeSpectrum(data, sr, fftSize) {
-    const start = Math.max(0, Math.floor(data.length / 2 - fftSize / 2));
-    const slice = data.slice(start, start + fftSize);
-    const windowed = new Float32Array(fftSize);
-    for (let i = 0; i < fftSize; i++) {
-      const w = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (fftSize - 1));
-      windowed[i] = (slice[i] || 0) * w;
-    }
-    return fftMagnitude(windowed);
-  }
-
-  // Averages the magnitude spectrum across several windows spread through the whole
-  // track (instead of a single snapshot from the middle) — a quiet bridge or a loud
-  // chorus alone isn't representative of the song, so this gives a much more honest
-  // picture of its actual spectral balance, which is what the adaptive tuning below
-  // is based on.
-  function computeAveragedSpectrum(data, sr, fftSize, numWindows = 16) {
-    const totalMags = new Float32Array(fftSize / 2);
-    let windowsUsed = 0;
-    for (let w = 0; w < numWindows; w++) {
-      const start = Math.floor((w / numWindows) * Math.max(1, data.length - fftSize));
-      if (start < 0 || start + fftSize > data.length) continue;
-      const windowed = new Float32Array(fftSize);
-      for (let i = 0; i < fftSize; i++) {
-        const win = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (fftSize - 1));
-        windowed[i] = data[start + i] * win;
-      }
-      const mags = fftMagnitude(windowed);
-      for (let i = 0; i < mags.length; i++) totalMags[i] += mags[i];
-      windowsUsed++;
-    }
-    if (windowsUsed === 0) return computeSpectrum(data, sr, fftSize);
-    for (let i = 0; i < totalMags.length; i++) totalMags[i] /= windowsUsed;
-    return totalMags;
-  }
-
-  // How much spectral energy sits in each broad region, as a fraction of the total.
-  // Used to compare this specific song against a "typically balanced" mix, so the
-  // mastering can lean back where the song already has plenty and lean in where
-  // it's thin — instead of applying the same fixed boost regardless of the source.
-  function bandEnergyRatio(mags, sr, fftSize) {
-    const energyInRange = (loHz, hiHz) => {
-      const loBin = Math.max(1, Math.floor(loHz * fftSize / sr));
-      const hiBin = Math.min(mags.length, Math.ceil(hiHz * fftSize / sr));
-      let sum = 0, count = 0;
-      for (let i = loBin; i < hiBin; i++) { sum += mags[i] * mags[i]; count++; }
-      return count ? sum / count : 0;
-    };
-    const bass = energyInRange(30, 250);
-    const lowMid = energyInRange(250, 2000);
-    const highMid = energyInRange(2000, 6000);
-    const air = energyInRange(6000, 16000);
-    const total = bass + lowMid + highMid + air || 1;
-    return {
-      bassRatio: bass / total,
-      lowMidRatio: lowMid / total,
-      highMidRatio: highMid / total,
-      airRatio: air / total,
-    };
-  }
-
   // Reference balance for a "conventionally balanced" full mix, expressed the same
-  // way bandEnergyRatio measures a track: the mean of magnitude² per BIN inside
-  // each region, normalised to sum to 1.
+  // way the DSP core measures a track: the mean of magnitude² per BIN inside each
+  // region, normalised to sum to 1.
   //
   // Getting these numbers right matters more than it looks. Because a music
   // spectrum falls steeply with frequency, a per-bin mean is dominated by the low
@@ -1040,55 +1452,6 @@
   // reference ratio is 0.0009).
   function adaptiveMultiplier(actual, typical, strengthDb = 0.35) {
     return clamp(Math.pow(10, -balanceErrorDb(actual, typical) * strengthDb / 20), 0.78, 1.25);
-  }
-
-  function fftMagnitude(input) {
-    const n = input.length;
-    const re = new Float32Array(n);
-    const im = new Float32Array(n);
-    re.set(input);
-
-    for (let i = 1, j = 0; i < n; i++) {
-      let bit = n >> 1;
-      for (; j & bit; bit >>= 1) j ^= bit;
-      j ^= bit;
-      if (i < j) {
-        [re[i], re[j]] = [re[j], re[i]];
-        [im[i], im[j]] = [im[j], im[i]];
-      }
-    }
-    for (let len = 2; len <= n; len <<= 1) {
-      const ang = -2 * Math.PI / len;
-      const wr = Math.cos(ang), wi = Math.sin(ang);
-      for (let i = 0; i < n; i += len) {
-        let curWr = 1, curWi = 0;
-        for (let j = 0; j < len / 2; j++) {
-          const ur = re[i+j], ui = im[i+j];
-          const vr = re[i+j+len/2]*curWr - im[i+j+len/2]*curWi;
-          const vi = re[i+j+len/2]*curWi + im[i+j+len/2]*curWr;
-          re[i+j] = ur + vr; im[i+j] = ui + vi;
-          re[i+j+len/2] = ur - vr; im[i+j+len/2] = ui - vi;
-          const nwr = curWr*wr - curWi*wi;
-          const nwi = curWr*wi + curWi*wr;
-          curWr = nwr; curWi = nwi;
-        }
-      }
-    }
-    const mags = new Float32Array(n / 2);
-    for (let i = 0; i < n / 2; i++) {
-      mags[i] = Math.sqrt(re[i]*re[i] + im[i]*im[i]);
-    }
-    return mags;
-  }
-
-  function spectralCentroid(mags, sr, fftSize) {
-    let num = 0, den = 0;
-    for (let i = 0; i < mags.length; i++) {
-      const freq = i * sr / fftSize;
-      num += freq * mags[i];
-      den += mags[i];
-    }
-    return den > 0 ? num / den : 0;
   }
 
   function recommendPreset(data) {
@@ -1149,6 +1512,11 @@
   //   highMid = HP(f1) · HP(f2) · LP(f3)
   //   air     = HP(f1) · HP(f2) · HP(f3)
   //
+  // Written out naively that is 24 biquads, but the upper three bands all begin
+  // with the same HP(f1) and the top two continue through the same HP(f2), so
+  // those stages are built once and fanned out: 18 biquads for an identical
+  // response, which is a quarter of the crossover's render cost gone.
+  //
   // The air band (>5.2 kHz) runs fast attack and a higher ratio, which makes it do
   // double duty as a de-esser: it rides down harsh sibilance and cymbal spikes
   // without the whole top end being dulled by a static EQ cut.
@@ -1166,20 +1534,24 @@
       air:     adaptiveMultiplier(analysisData.airRatio, TYPICAL_BALANCE.air),
     } : { low: 1, lowMid: 1, highMid: 1, air: 1 };
 
-    const paths = {
-      low: seriesStages([
-        makeLR4(ctx, 'lowpass', F1), makeLR4(ctx, 'allpass', F2), makeLR4(ctx, 'allpass', F3),
-      ]),
-      lowMid: seriesStages([
-        makeLR4(ctx, 'highpass', F1), makeLR4(ctx, 'lowpass', F2), makeLR4(ctx, 'allpass', F3),
-      ]),
-      highMid: seriesStages([
-        makeLR4(ctx, 'highpass', F1), makeLR4(ctx, 'highpass', F2), makeLR4(ctx, 'lowpass', F3),
-      ]),
-      air: seriesStages([
-        makeLR4(ctx, 'highpass', F1), makeLR4(ctx, 'highpass', F2), makeLR4(ctx, 'highpass', F3),
-      ]),
-    };
+    const aboveF1 = makeLR4(ctx, 'highpass', F1);   // shared by lowMid, highMid, air
+    const aboveF2 = makeLR4(ctx, 'highpass', F2);   // shared by highMid, air
+    aboveF1.output.connect(aboveF2.input);
+
+    const lowPath = seriesStages([
+      makeLR4(ctx, 'lowpass', F1), makeLR4(ctx, 'allpass', F2), makeLR4(ctx, 'allpass', F3),
+    ]);
+    const lowMidPath = seriesStages([
+      makeLR4(ctx, 'lowpass', F2), makeLR4(ctx, 'allpass', F3),
+    ]);
+    const highMidPath = makeLR4(ctx, 'lowpass', F3);
+    const airPath = makeLR4(ctx, 'highpass', F3);
+
+    sourceNode.connect(lowPath.input);
+    sourceNode.connect(aboveF1.input);
+    aboveF1.output.connect(lowMidPath.input);
+    aboveF2.output.connect(highMidPath.input);
+    aboveF2.output.connect(airPath.input);
 
     function bandComp(cfg, adaptMult, knee) {
       const c = ctx.createDynamicsCompressor();
@@ -1196,11 +1568,15 @@
 
     const sum = ctx.createGain();
     // A softer knee on the air band keeps the de-essing from sounding like a gate.
-    const knees = { low: 6, lowMid: 6, highMid: 8, air: 12 };
-    for (const key of ['low', 'lowMid', 'highMid', 'air']) {
-      sourceNode.connect(paths[key].input);
-      const comp = bandComp(preset.bands[key], adapt[key], knees[key]);
-      paths[key].output.connect(comp.input);
+    const bands = [
+      { key: 'low',     path: lowPath,     knee: 6 },
+      { key: 'lowMid',  path: lowMidPath,  knee: 6 },
+      { key: 'highMid', path: highMidPath, knee: 8 },
+      { key: 'air',     path: airPath,     knee: 12 },
+    ];
+    for (const b of bands) {
+      const comp = bandComp(preset.bands[b.key], adapt[b.key], b.knee);
+      b.path.output.connect(comp.input);
       comp.output.connect(sum);
     }
     return sum;
@@ -1237,7 +1613,6 @@
       node.connect(f);
       node = f;
     }
-
     return node;
   }
 
@@ -1456,7 +1831,11 @@
   // ================================================================
   //  MASTERING PASS
   // ================================================================
-  function renderChain(preset, intensity) {
+  // Offline rendering has no progress event, but it can be suspended at a given
+  // render time and resumed — which is enough to report how far along it is. A
+  // multi-minute track spends most of its mastering time in here, and a spinner
+  // that sits still for ten seconds reads as a hang; a number that moves does not.
+  function renderChain(preset, intensity, onProgress) {
     const offlineCtx = new OfflineAudioContext(
       originalBuffer.numberOfChannels, originalBuffer.length, originalBuffer.sampleRate
     );
@@ -1464,6 +1843,24 @@
     src.buffer = originalBuffer;
     buildProcessingChain(offlineCtx, src, preset, intensity, offlineCtx.destination);
     src.start(0);
+
+    if (onProgress && typeof offlineCtx.suspend === 'function') {
+      const steps = 25;
+      const frames = originalBuffer.length;
+      const sr = originalBuffer.sampleRate;
+      try {
+        for (let i = 1; i < steps; i++) {
+          const frame = Math.floor((i / steps) * frames / 128) * 128;
+          if (frame <= 0 || frame >= frames) continue;
+          offlineCtx.suspend(frame / sr).then(() => {
+            onProgress(i / steps);
+            offlineCtx.resume();
+          }).catch(() => { try { offlineCtx.resume(); } catch (e) {} });
+        }
+      } catch (e) {
+        // Suspension isn't available everywhere; rendering still works without it.
+      }
+    }
     return offlineCtx.startRendering();
   }
 
@@ -1473,148 +1870,221 @@
   //
   // Loudness is matched against a real render rather than guessed from the source,
   // and that needs only ONE render. The loudness trim belongs after the last
-  // level-dependent stage in the chain, so applying it to the rendered samples in
-  // JS is mathematically identical to baking it into the graph and re-rendering —
-  // which is what this used to do, at the cost of processing the whole track
-  // twice. It is then verified and nudged once more against the limiter, because
-  // limiting itself costs a few tenths of a dB.
+  // level-dependent stage in the chain, so applying it to the rendered samples is
+  // mathematically identical to baking it into the graph and re-rendering — which
+  // is what this used to do, at the cost of processing the whole track twice.
   async function runMastering(onStage) {
     if (!originalBuffer || !currentPreset) return false;
-    const myToken = ++fineAnalysisToken;
+    const myToken = ++masterToken;
+    // A background run can be adopted by a later "Master →" press, so stage
+    // reports go through the live handle rather than a captured callback.
+    const report = msg => { const cb = onStage(); if (cb) cb(msg); };
     const preset = currentPreset;
     const intensity = currentIntensity;
     const sr = originalBuffer.sampleRate;
-    const target = preset.targetLufs;
     const ceilingDb = preset.ceilingDb !== undefined ? preset.ceilingDb : -1;
-    const ceiling = Math.pow(10, ceilingDb / 20) * TP_GUARD;
 
-    // Render the full chain, once.
-    if (onStage) onStage('Mastering …');
-    await wait(16);
+    report('Mastering …');
     let rendered;
     try {
-      rendered = await renderChain(preset, intensity);
+      rendered = await renderChain(preset, intensity, pct => {
+        report('Mastering … ' + Math.round(pct * 100) + '%');
+      });
     } catch (err) {
-      alert('Mastering failed while rendering this track. Please try a shorter file.');
+      if (onStage()) alert('Mastering failed while rendering this track. Please try a shorter file.');
       return false;
     }
-    if (myToken !== fineAnalysisToken) return false;
+    if (myToken !== masterToken) return false;
 
-    if (onStage) onStage('Matching loudness …');
-    await wait(16);
-
-    const chans = channelsOf(rendered);
-    const n = rendered.length;
-
-    // Measure what the chain actually produced, then scale onto the preset's
-    // target. Wide but bounded: enough to lift a genuinely quiet recording onto
-    // the target, not so much that a near-silent file gets blown 40 dB up into
-    // its own noise floor.
-    scaleChannels(chans, 1 / RENDER_HEADROOM);
-    const unityLufs = measureLufsChannels(chans, sr);
-    const trim = Math.pow(10, clamp(target - unityLufs, -14, 24) / 20);
-    scaleChannels(chans, trim);
-
-    if (onStage) onStage('Limiting …');
-    await wait(16);
-
-    // One exhaustive true-peak scan, then as many gain trials as the loudness
-    // match needs: scaling the audio scales its true-peak envelope exactly, so
-    // the envelope never has to be recomputed.
-    const env = new Float32Array(n);
-    truePeakEnvelope(chans, env);
-    const gain = new Float32Array(n);
-
-    let a = 1;
-    buildLimiterGain(env, gain, sr, ceiling, a);
-
-    // Limiting always costs a little loudness. Measure what the limited signal
-    // WOULD be, then close the remaining gap before committing to it — so the
-    // audio is only ever multiplied once, by the final curve.
-    const limited = measureLufsChannels(chans, sr, gain, a);
-    const delta = target - limited;
-    if (Math.abs(delta) > 0.2) {
-      a = Math.pow(10, clamp(delta, -4, 4) / 20);
-      buildLimiterGain(env, gain, sr, ceiling, a);
+    report('Limiting …');
+    const channels = copyChannels(rendered);
+    const audioId = ++masterAudioSeq;
+    let out;
+    try {
+      out = await dsp.call('finalize', {
+        channels,
+        id: audioId,
+        sampleRate: sr,
+        targetLufs: preset.targetLufs,
+        // Small guard under the declared ceiling. 4x oversampling is what
+        // BS.1770-4 itself specifies and it still reads a touch low against a 32x
+        // reference (measured: within 0.08 dB with these kernels), and the
+        // limiter's gain curve is not perfectly constant across a kernel span.
+        // The guard covers both, so a master that says -1.0 dBTP really does
+        // measure at or below -1.0 dBTP on a stricter meter than this one.
+        ceiling: Math.pow(10, (ceilingDb - 0.3) / 20),
+        renderHeadroom: RENDER_HEADROOM,
+      }, transferListOf(channels));
+    } catch (err) {
+      if (onStage()) alert('Mastering failed while finishing this track.');
+      return false;
     }
-    applyLimiterGain(chans, gain, a);
+    if (myToken !== masterToken) return false;
 
-    softClipCeiling(chans, ceiling);
-    applyEdgeFades(chans, sr);
-
-    if (myToken !== fineAnalysisToken) return false;
+    for (let c = 0; c < out.channels.length; c++) rendered.copyToChannel(out.channels[c], c);
     masteredBuffer = rendered;
+    masteredBufferId = audioId;
+    if (playGraph) attachMasterToPlayback();
     return true;
   }
 
-  // ---------- Playback ----------
-  function stopPlayback() {
-    if (playingSource) {
-      // Clear onended BEFORE stopping: otherwise the old callback fires
-      // asynchronously after a new source has already started (e.g. on an A/B
-      // switch) and incorrectly resets isPlaying to false while playback continues.
-      playingSource.onended = null;
-      try { playingSource.stop(); } catch(e) {}
-      playingSource.disconnect();
-      playingSource = null;
+  function startMasterRun(onStage) {
+    const run = { key: selectionKey(), stage: onStage || null, promise: null };
+    run.promise = runMastering(() => run.stage);
+    run.promise.catch(() => {}).then(() => { if (masterRun === run) masterRun = null; });
+    masterRun = run;
+    return run.promise;
+  }
+
+  // Serialises mastering — but only against work that is still wanted. A
+  // speculative run for the selection the user actually confirmed is awaited
+  // instead of duplicated; one for a selection they have since changed is
+  // abandoned rather than waited on, because blocking the real request behind a
+  // render whose result is already known to be discarded is the slowest possible
+  // thing to do.
+  async function ensureMaster(onStage) {
+    if (masteredBuffer) return true;
+    if (masterRun && masterRun.key === selectionKey()) {
+      // Adopt the background run: it keeps its progress, we get its screen.
+      if (onStage) masterRun.stage = onStage;
+      try { await masterRun.promise; } catch (err) {}
+      if (masteredBuffer) return true;
+    }
+    if (!originalBuffer || !currentPreset) return false;
+    try {
+      const ok = await startMasterRun(onStage);
+      return ok && !!masteredBuffer;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  // ================================================================
+  //  PLAYBACK
+  // ================================================================
+  // Original and master are played as two sources started at the same instant,
+  // each behind its own gain, and A/B is a 15 ms crossfade between those gains.
+  //
+  // The previous version stopped one source and started another at the same
+  // offset on every toggle. Cutting a waveform mid-cycle is a step discontinuity,
+  // i.e. a click, and A/B'ing produced two of them per switch — which is the
+  // "crackling" that gets blamed on CPU load. Nothing here is restarted, so the
+  // two stay sample-locked and the switch is inaudible apart from the music.
+  const FADE = 0.012;
+  const XFADE = 0.015;
+
+  function rampGain(param, to, time, dur) {
+    if (typeof param.cancelAndHoldAtTime === 'function') {
+      param.cancelAndHoldAtTime(time);
+    } else {
+      const held = param.value;
+      param.cancelScheduledValues(time);
+      param.setValueAtTime(held, time);
+    }
+    param.linearRampToValueAtTime(to, time + dur);
+  }
+
+  function stopPlayback(immediate) {
+    if (playGraph) {
+      const g = playGraph;
+      playGraph = null;
+      const t = audioCtx.currentTime;
+      const fade = immediate ? 0.004 : FADE;
+      for (const node of g.gains) rampGain(node.gain, 0, t, fade);
+      for (const src of g.sources) {
+        src.onended = null;
+        try { src.stop(t + fade + 0.01); } catch (e) {}
+      }
+      setTimeout(() => {
+        for (const src of g.sources) { try { src.disconnect(); } catch (e) {} }
+        for (const node of g.gains) { try { node.disconnect(); } catch (e) {} }
+      }, (fade + 0.2) * 1000);
     }
     isPlaying = false;
     playBtn.textContent = '▶ Play';
   }
 
-  function startPlayback(offset = 0) {
-    if (!originalBuffer) return;
-    stopPlayback();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-
-    const buffer = (playMode === 'mastered' && masteredBuffer) ? masteredBuffer : originalBuffer;
+  function makeVoice(buffer, startAt, offset, initialGain) {
     const src = audioCtx.createBufferSource();
     src.buffer = buffer;
-    src.connect(audioCtx.destination);
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0;
+    src.connect(gain);
+    gain.connect(audioCtx.destination);
+    src.start(startAt, offset);
+    gain.gain.setValueAtTime(0, startAt);
+    gain.gain.linearRampToValueAtTime(initialGain, startAt + FADE);
+    return { src, gain };
+  }
 
-    src.start(0, Math.min(offset, buffer.duration));
-    playStartedAt = audioCtx.currentTime - offset;
-    playingSource = src;
+  // A master finished while the preview was already running: slot it in silently
+  // so the A/B button works without restarting anything.
+  function attachMasterToPlayback() {
+    if (!playGraph || playGraph.master || !masteredBuffer) return;
+    const elapsed = audioCtx.currentTime - playGraph.startedAt;
+    if (elapsed < 0 || elapsed >= masteredBuffer.duration) return;
+    const voice = makeVoice(masteredBuffer, audioCtx.currentTime + 0.02, elapsed + 0.02, 0);
+    playGraph.master = voice;
+    playGraph.sources.push(voice.src);
+    playGraph.gains.push(voice.gain);
+  }
+
+  function startPlayback(offset = 0) {
+    if (!originalBuffer) return;
+    stopPlayback(true);
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
+    const startAt = audioCtx.currentTime + 0.03;
+    const wantMaster = playMode === 'mastered' && masteredBuffer;
+    const orig = makeVoice(originalBuffer, startAt, offset, wantMaster ? 0 : 1);
+    const graph = { orig, master: null, sources: [orig.src], gains: [orig.gain], startedAt: startAt - offset };
+
+    if (masteredBuffer) {
+      const master = makeVoice(masteredBuffer, startAt, offset, wantMaster ? 1 : 0);
+      graph.master = master;
+      graph.sources.push(master.src);
+      graph.gains.push(master.gain);
+    }
+
+    playGraph = graph;
+    playStartedAt = graph.startedAt;
     isPlaying = true;
     playBtn.innerHTML = '<span class="stop-icon"></span>';
 
-    src.onended = () => {
-      if (isPlaying) { isPlaying = false; playBtn.textContent = '▶ Play'; }
+    orig.src.onended = () => {
+      if (playGraph === graph) stopPlayback(true);
     };
   }
 
-  function restartPlayback() {
-    if (!isPlaying) return;
-    const offset = audioCtx.currentTime - playStartedAt;
-    startPlayback(offset % originalBuffer.duration);
+  function setPlayMode(mode) {
+    if (mode === 'mastered' && playGraph && !playGraph.master) attachMasterToPlayback();
+    // If the master voice still isn't there, stay on the original rather than
+    // crossfading into silence.
+    const onMaster = mode === 'mastered' && (!playGraph || !!playGraph.master);
+    playMode = onMaster ? 'mastered' : 'orig';
+    btnMastered.classList.toggle('active', playMode === 'mastered');
+    btnOrig.classList.toggle('active', playMode !== 'mastered');
+    if (!playGraph) return;
+    const t = audioCtx.currentTime;
+    if (playGraph.orig) rampGain(playGraph.orig.gain.gain, onMaster ? 0 : 1, t, XFADE);
+    if (playGraph.master) rampGain(playGraph.master.gain.gain, onMaster ? 1 : 0, t, XFADE);
   }
 
   playBtn.addEventListener('click', () => {
     if (!originalBuffer) return;
-    if (isPlaying) {
-      stopPlayback();
-    } else {
-      startPlayback(0);
-    }
+    if (isPlaying) stopPlayback();
+    else startPlayback(0);
   });
 
-  btnOrig.addEventListener('click', () => {
-    playMode = 'orig';
-    btnOrig.classList.add('active');
-    btnMastered.classList.remove('active');
-    if (isPlaying) restartPlayback();
-  });
+  btnOrig.addEventListener('click', () => setPlayMode('orig'));
   btnMastered.addEventListener('click', () => {
     if (!currentPreset || !masteredBuffer) return;
-    playMode = 'mastered';
-    btnMastered.classList.add('active');
-    btnOrig.classList.remove('active');
-    if (isPlaying) restartPlayback();
+    setPlayMode('mastered');
   });
 
   setInterval(() => {
     if (isPlaying && originalBuffer) {
-      const t = (audioCtx.currentTime - playStartedAt) % originalBuffer.duration;
+      const t = clamp(audioCtx.currentTime - playStartedAt, 0, originalBuffer.duration);
       playTime.textContent = formatTime(t) + ' / ' + formatTime(originalBuffer.duration);
     }
   }, 200);
@@ -1625,13 +2095,19 @@
     return m + ':' + sec.toString().padStart(2, '0');
   }
 
-  // ---------- Export ----------
+  // ================================================================
+  //  EXPORT
+  // ================================================================
   // Nothing is re-rendered here: the master already exists, so exporting is just
-  // encoding it. That also guarantees the file and the preview are identical.
-  async function renderMasteredBuffer() {
-    if (masteredBuffer) return masteredBuffer;
-    const ok = await runMastering(null);
-    return ok ? masteredBuffer : null;
+  // encoding it, in the worker, from a copy — which also guarantees the file and
+  // the preview are identical.
+  async function masterForExport() {
+    if (!masteredBuffer) {
+      exportProgress.value = 10;
+      const ok = await ensureMaster(null);
+      if (!ok) return null;
+    }
+    return masteredBuffer;
   }
 
   function downloadBlob(blob, extension) {
@@ -1643,7 +2119,7 @@
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
 
   function setExportButtonsDisabled(disabled) {
@@ -1652,27 +2128,65 @@
     exportM4aBtn.disabled = disabled;
   }
 
+  function finishExport() {
+    setTimeout(() => {
+      setExportButtonsDisabled(false);
+      exportProgress.style.display = 'none';
+      exportProgress.value = 0;
+    }, 600);
+  }
+
+  // Encodes the master the worker already holds. Only if that cache has been
+  // superseded (a later run finished and replaced it) are the samples shipped
+  // over again.
+  async function encodeFromMaster(op, extra) {
+    const buffer = masteredBuffer;
+    const args = Object.assign({ id: masteredBufferId, sampleRate: buffer.sampleRate }, extra);
+    try {
+      return await dsp.call(op, args);
+    } catch (err) {
+      const channels = copyChannels(buffer);
+      return dsp.call(op, Object.assign({}, args, { channels }), transferListOf(channels));
+    }
+  }
+
+  async function encodeWavBlob(bitDepth) {
+    const out = await encodeFromMaster('encodeWav', { bitDepth });
+    return new Blob([out.buffer], { type: 'audio/wav' });
+  }
+
   exportBtn.addEventListener('click', async () => {
     if (!originalBuffer || !currentPreset) return;
     setExportButtonsDisabled(true);
     exportProgress.style.display = 'block';
     exportProgress.value = 20;
 
-    const rendered = await renderMasteredBuffer();
-    exportProgress.value = 70;
-
-    if (rendered) {
-      const wavBlob = bufferToWav(rendered, 24);
+    const buffer = await masterForExport();
+    if (buffer) {
+      exportProgress.value = 60;
+      downloadBlob(await encodeWavBlob(24), 'wav');
       exportProgress.value = 100;
-      downloadBlob(wavBlob, 'wav');
     }
-
-    setTimeout(() => {
-      setExportButtonsDisabled(false);
-      exportProgress.style.display = 'none';
-      exportProgress.value = 0;
-    }, 600);
+    finishExport();
   });
+
+  // lamejs is loaded in the page; its source is handed to the worker once so MP3
+  // encoding (by far the slowest export) also runs off the main thread. If that
+  // cannot be arranged, the worker's inline fallback still has the page's global.
+  let mp3WorkerReady = null;
+  function prepareMp3Encoder() {
+    if (!mp3WorkerReady) {
+      mp3WorkerReady = (async () => {
+        // Inline fallback already sees the page's own lamejs global.
+        if (!dsp.offThread) return typeof lamejs !== 'undefined';
+        const res = await fetch(LAMEJS_URL);
+        const source = await res.text();
+        const out = await dsp.call('initMp3', { source });
+        return !!(out && out.ok);
+      })().catch(() => false);
+    }
+    return mp3WorkerReady;
+  }
 
   exportMp3Btn.addEventListener('click', async () => {
     if (!originalBuffer || !currentPreset) return;
@@ -1682,22 +2196,24 @@
     }
     setExportButtonsDisabled(true);
     exportProgress.style.display = 'block';
-    exportProgress.value = 20;
+    exportProgress.value = 15;
 
-    const rendered = await renderMasteredBuffer();
-    exportProgress.value = 60;
-
-    if (rendered) {
-      const mp3Blob = bufferToMp3(rendered);
-      exportProgress.value = 100;
-      downloadBlob(mp3Blob, 'mp3');
+    try {
+      const ready = await prepareMp3Encoder();
+      if (!ready) throw new Error('mp3 encoder unavailable');
+      const buffer = await masterForExport();
+      if (buffer) {
+        exportProgress.value = 45;
+        const out = await encodeFromMaster('encodeMp3', { kbps: 192 });
+        exportProgress.value = 95;
+        const id3Tag = buildId3v2Tag(EXPORT_ARTIST, base64ToUint8Array(COVER_ART_BASE64));
+        downloadBlob(new Blob([id3Tag, out.buffer], { type: 'audio/mp3' }), 'mp3');
+        exportProgress.value = 100;
+      }
+    } catch (err) {
+      alert('MP3 export failed. Please try WAV export instead.');
     }
-
-    setTimeout(() => {
-      setExportButtonsDisabled(false);
-      exportProgress.style.display = 'none';
-      exportProgress.value = 0;
-    }, 600);
+    finishExport();
   });
 
   exportM4aBtn.addEventListener('click', async () => {
@@ -1711,16 +2227,19 @@
     exportProgress.value = 5;
 
     try {
-      const ffmpeg = await window.getSignalFFmpeg(msg => {
+      // Kick the master off before waiting on the converter download, so the two
+      // slow parts of a first M4A export overlap instead of queueing.
+      const bufferPromise = masterForExport();
+      const ffmpeg = await window.getSignalFFmpeg(() => {
         // Once ffmpeg starts logging, the (potentially slow, one-time) download/
         // load step is done and actual encoding has started.
         if (exportProgress.value < 60) exportProgress.value = 60;
       });
       exportProgress.value = 40;
 
-      const rendered = await renderMasteredBuffer();
-      if (!rendered) throw new Error('no master');
-      const wavBlob = bufferToWav(rendered, 24);
+      const buffer = await bufferPromise;
+      if (!buffer) throw new Error('no master');
+      const wavBlob = await encodeWavBlob(24);
       const wavData = new Uint8Array(await wavBlob.arrayBuffer());
 
       await ffmpeg.writeFile('input.wav', wavData);
@@ -1737,42 +2256,14 @@
       ]);
       const outData = await ffmpeg.readFile('output.m4a');
       exportProgress.value = 95;
-
-      const m4aBlob = new Blob([outData.buffer], { type: 'audio/mp4' });
+      downloadBlob(new Blob([outData.buffer], { type: 'audio/mp4' }), 'm4a');
       exportProgress.value = 100;
-      downloadBlob(m4aBlob, 'm4a');
     } catch (err) {
       alert('M4A export failed. Please try WAV or MP3 export instead.');
     }
-
-    setTimeout(() => {
-      setExportButtonsDisabled(false);
-      exportProgress.style.display = 'none';
-      exportProgress.value = 0;
-    }, 600);
+    finishExport();
   });
 
-  // Going from 32-bit float to 16-bit integer throws away real information. Doing
-  // it by plain rounding turns that loss into quantization DISTORTION, which is
-  // correlated with the music and audible as grit on fades and reverb tails.
-  // Adding TPDF (triangular) dither at 1 LSB before rounding converts it into a
-  // steady, uncorrelated, inaudible noise floor instead — the standard, and the
-  // last real quality decision in a mastering chain.
-  function floatTo16BitPCM(channelData) {
-    const out = new Int16Array(channelData.length);
-    const lsb = 1 / 32768;
-    for (let i = 0; i < channelData.length; i++) {
-      const dither = (Math.random() - Math.random()) * lsb; // TPDF, peak ±1 LSB
-      const s = Math.max(-1, Math.min(1, channelData[i] + dither));
-      const q = Math.round(s < 0 ? s * 0x8000 : s * 0x7FFF);
-      out[i] = q > 32767 ? 32767 : (q < -32768 ? -32768 : q);
-    }
-    return out;
-  }
-
-  // Encodes with lamejs (pure JS port of LAME), loaded from cdnjs — a genuine MP3
-  // file, not just a renamed WAV. 192kbps keeps quality close to the WAV master
-  // while landing at a fraction of the file size.
   function base64ToUint8Array(base64) {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
@@ -1835,95 +2326,6 @@
     tag.set(tpe1, 10);
     tag.set(apic, 10 + tpe1.length);
     return tag;
-  }
-
-  function bufferToMp3(buffer) {
-    const numChannels = buffer.numberOfChannels;
-    const sampleRate = buffer.sampleRate;
-    const kbps = 192;
-    const encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, kbps);
-
-    const left = floatTo16BitPCM(buffer.getChannelData(0));
-    const right = numChannels > 1 ? floatTo16BitPCM(buffer.getChannelData(1)) : null;
-
-    const blockSize = 1152;
-    const chunks = [];
-    for (let i = 0; i < left.length; i += blockSize) {
-      const leftChunk = left.subarray(i, i + blockSize);
-      const mp3buf = right
-        ? encoder.encodeBuffer(leftChunk, right.subarray(i, i + blockSize))
-        : encoder.encodeBuffer(leftChunk);
-      if (mp3buf.length > 0) chunks.push(new Int8Array(mp3buf));
-    }
-    const finalBuf = encoder.flush();
-    if (finalBuf.length > 0) chunks.push(new Int8Array(finalBuf));
-
-    const id3Tag = buildId3v2Tag(EXPORT_ARTIST, base64ToUint8Array(COVER_ART_BASE64));
-    return new Blob([id3Tag, ...chunks], { type: 'audio/mp3' });
-  }
-
-  // WAV export is 24-bit by default. The master lives in 32-bit float internally,
-  // and squeezing it into 16 bits at the very last step was throwing away ~48 dB
-  // of usable floor for no reason — 24-bit is what you would hand to a distributor
-  // or take into another DAW, and it needs no dither at all.
-  function bufferToWav(buffer, bitDepth = 24) {
-    const numChannels = buffer.numberOfChannels;
-    const sampleRate = buffer.sampleRate;
-    const numFrames = buffer.length;
-    const bytesPerSample = bitDepth === 16 ? 2 : 3;
-    const blockAlign = numChannels * bytesPerSample;
-    const dataSize = numFrames * blockAlign;
-    const bufferSize = 44 + dataSize;
-
-    const arrBuf = new ArrayBuffer(bufferSize);
-    const view = new DataView(arrBuf);
-
-    writeString(view, 0, 'RIFF');
-    view.setUint32(4, 36 + dataSize, true);
-    writeString(view, 8, 'WAVE');
-    writeString(view, 12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * blockAlign, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, bitDepth, true);
-    writeString(view, 36, 'data');
-    view.setUint32(40, dataSize, true);
-
-    const channels = [];
-    for (let c = 0; c < numChannels; c++) channels.push(buffer.getChannelData(c));
-
-    let offset = 44;
-    if (bitDepth === 16) {
-      for (let c = 0; c < numChannels; c++) channels[c] = floatTo16BitPCM(channels[c]);
-      for (let i = 0; i < numFrames; i++) {
-        for (let c = 0; c < numChannels; c++) {
-          view.setInt16(offset, channels[c][i], true);
-          offset += 2;
-        }
-      }
-    } else {
-      for (let i = 0; i < numFrames; i++) {
-        for (let c = 0; c < numChannels; c++) {
-          const s = Math.max(-1, Math.min(1, channels[c][i]));
-          let v = Math.round(s < 0 ? s * 0x800000 : s * 0x7FFFFF);
-          if (v > 0x7FFFFF) v = 0x7FFFFF;
-          if (v < -0x800000) v = -0x800000;
-          if (v < 0) v += 0x1000000;
-          view.setUint8(offset, v & 0xFF);
-          view.setUint8(offset + 1, (v >> 8) & 0xFF);
-          view.setUint8(offset + 2, (v >> 16) & 0xFF);
-          offset += 3;
-        }
-      }
-    }
-    return new Blob([arrBuf], { type: 'audio/wav' });
-  }
-
-  function writeString(view, offset, str) {
-    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
   }
 
 })();
