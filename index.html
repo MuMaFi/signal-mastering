@@ -683,6 +683,11 @@ function createSignalDsp() {
     // step can only rise by 1/look going backwards, the curve is guaranteed to be
     // at or below the required gain at every single sample — no overshoot is
     // mathematically possible.
+    //
+    // A shorter ramp was tried for the club preset, on the theory that ducking
+    // milliseconds ahead of a four-on-the-floor kick costs punch. Measured, it
+    // did the opposite: 4.90 dB of transient against 5.31 for the long ramp, so
+    // there is one timing for everything.
     const look = Math.max(8, Math.round(sr * 0.0035));
     const slope = 1 / look;
     for (let i = n - 2; i >= 0; i--) {
@@ -835,6 +840,48 @@ function createSignalDsp() {
 
   // ===================== operations =====================
 
+  // Does the low end pulse regularly at a club tempo? Autocorrelates the low-band
+  // envelope across the lags that correspond to 100-150 BPM. A four-on-the-floor
+  // kick scores near 1; anything without a steady low pulse (or with none at all)
+  // falls away sharply.
+  function lowEndPulse(ch0, sr) {
+    const hop = Math.round(sr / 100);            // 10 ms resolution
+    const n = ch0.length;
+    const frames = Math.floor(n / hop);
+    if (frames < 200) return 0;
+
+    const env = new Float32Array(frames);
+    const a = 1 - Math.exp(-2 * Math.PI * 150 / sr);
+    let lp = 0, acc = 0, cnt = 0, f = 0;
+    for (let i = 0; i < n; i++) {
+      lp += (ch0[i] - lp) * a;
+      acc += lp * lp;
+      if (++cnt === hop) {
+        if (f < frames) env[f++] = Math.sqrt(acc / hop);
+        acc = 0; cnt = 0;
+      }
+    }
+
+    // Subtract the mean, so this measures pulsing rather than how loud the bass is.
+    let mean = 0;
+    for (let i = 0; i < frames; i++) mean += env[i];
+    mean /= frames;
+    for (let i = 0; i < frames; i++) env[i] -= mean;
+
+    let e0 = 0;
+    for (let i = 0; i < frames; i++) e0 += env[i] * env[i];
+    if (e0 <= 0) return 0;
+
+    let best = 0;
+    for (let lag = 40; lag <= 60; lag++) {       // 0.40-0.60 s between beats
+      let sum = 0;
+      for (let i = 0; i + lag < frames; i++) sum += env[i] * env[i + lag];
+      const r = sum / e0;
+      if (r > best) best = r;
+    }
+    return best;
+  }
+
   function analyze(args) {
     const chans = args.channels;
     const sr = args.sampleRate;
@@ -870,6 +917,7 @@ function createSignalDsp() {
         truePeakDb: Math.round(truePeakDb * 10) / 10,
         dynamicRange: Math.round(Math.abs(truePeakDb - avgLoudDb) * 10) / 10,
         centroidHz: Math.round(spectralCentroid(spectrum, sr, fftSize)),
+        lowPulse: lowEndPulse(ch0, sr),
         duration: n / sr,
         bassRatio: balance.bassRatio,
         lowMidRatio: balance.lowMidRatio,
@@ -915,14 +963,29 @@ function createSignalDsp() {
       refine(ceiling / (L1 * scale));
       buildLimiterGain(env, gain, sr, ceiling, scale);
 
-      // Limiting always costs a little loudness. Measure what the limited signal
-      // WOULD be, then close the remaining gap before committing to it.
-      const limited = measureLufs(chans, sr, gain, scale);
-      const delta = clamp(target - limited, -4, 4);
-      if (Math.abs(delta) > 0.2) {
-        scale *= Math.pow(10, delta / 20);
+      // Limiting always costs loudness, and the deeper it goes the less each extra
+      // dB of gain gives back — so a single correction is a guess that lands wide
+      // on dense material. This measures what the limited signal WOULD be,
+      // corrects, and measures again.
+      //
+      // It keeps the best result rather than the last, because a target is not
+      // always reachable: past a point more gain buys only more limiting, and
+      // chasing it would crush the track to land on a number.
+      let bestScale = scale;
+      let bestErr = Infinity;
+      for (let pass = 0; pass < 4; pass++) {
+        const limited = measureLufs(chans, sr, gain, scale);
+        const err = target - limited;
+        if (Math.abs(err) < bestErr) { bestErr = Math.abs(err); bestScale = scale; }
+        if (Math.abs(err) <= 0.15 || pass === 3) break;
+        scale *= Math.pow(10, clamp(err, -3, 3) / 20);
         // A louder target means a lower effective ceiling in source terms, so the
         // scan may have to look at blocks it was allowed to skip the first time.
+        refine(ceiling / (L1 * scale));
+        buildLimiterGain(env, gain, sr, ceiling, scale);
+      }
+      if (scale !== bestScale) {
+        scale = bestScale;
         refine(ceiling / (L1 * scale));
         buildLimiterGain(env, gain, sr, ceiling, scale);
       }
@@ -1372,6 +1435,40 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       glue: { thresh: -16, ratio: 5.0, attack: 0.003, release: 0.09 },
     },
     {
+      id: 'strobe',
+      name: 'Strobe',
+      desc: 'Club',
+      targetLufs: -9.0,
+      ceilingDb: -1.0,
+      bands: {
+        // The low band's attack is deliberately the slowest of any preset. A fast
+        // attack here clamps the kick's leading edge, which is the one thing a
+        // club master cannot lose — let the transient through, then hold the
+        // sustain. The release is timed to recover between beats rather than
+        // pumping across them.
+        low:     { thresh: -26, ratio: 4.2, attack: 0.030, release: 0.16, makeup: 2.20 },
+        lowMid:  { thresh: -23, ratio: 3.4, attack: 0.010, release: 0.14, makeup: 0.94 },
+        highMid: { thresh: -20, ratio: 3.0, attack: 0.005, release: 0.11, makeup: 1.18 },
+        air:     { thresh: -23, ratio: 3.8, attack: 0.0015, release: 0.06, makeup: 1.28 },
+      },
+      eq: [
+        { freq: 48,    gain: 3.0,  type: 'lowshelf',  Q: 0.7 },
+        { freq: 300,   gain: -2.6, type: 'peaking',   Q: 0.9 },
+        { freq: 1500,  gain: 1.4,  type: 'peaking',   Q: 0.9 },
+        { freq: 4200,  gain: -1.6, type: 'peaking',   Q: 1.4 },
+        { freq: 10500, gain: 3.8,  type: 'highshelf', Q: 0.7 },
+      ],
+      saturation: 0.58,
+      air: 0.50,
+      stereoWidth: 1.24,
+      // Hardest mono low end of the set: a club rig folds the bottom to a single
+      // sub anyway, and side energy down there just cancels itself.
+      bassMono: 0.95,
+      sideAir: 2.4,
+      // Slow attack again on the glue, for the same reason as the low band.
+      glue: { thresh: -16, ratio: 4.2, attack: 0.020, release: 0.11 },
+    },
+    {
       id: 'driftwood',
       name: 'Driftwood',
       desc: 'Warm',
@@ -1496,10 +1593,28 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   //
   // What mono loses is not distortion but content: side energy is absent there.
   // That is the real cost, and it is measured rather than assumed.
+  //   height     a pinna-like pair of moves on the sides: a dip where the outer
+  //              ear notches sound arriving from the front and a lift above it.
+  //              The brain reads that combination as elevation, which is the cue
+  //              height formats are built on.
+  //   taps       a spread of early reflections rather than one echo. A single
+  //              delayed copy reads as a slapback; several at falling levels and
+  //              unrelated spacings read as a room.
   const SPACE_MODES = {
-    off:       { label: 'dry',       shuffleDb: 0,   allpass: [],                     widthMult: 1,    delayMs: 0,  delayDb: 0 },
-    wide:      { label: 'wider',     shuffleDb: 2.0, allpass: [320, 1500],            widthMult: 1.10, delayMs: 0,  delayDb: 0 },
-    immersive: { label: 'enveloping',shuffleDb: 4.2, allpass: [260, 900, 3000, 8000], widthMult: 1.26, delayMs: 15, delayDb: -7.5 },
+    off: {
+      label: 'dry', shuffleDb: 0, allpass: [], widthMult: 1, taps: [], height: null,
+    },
+    wide: {
+      label: 'wider', shuffleDb: 2.0, allpass: [320, 1500], widthMult: 1.10,
+      taps: [], height: null,
+    },
+    immersive: {
+      label: 'enveloping', shuffleDb: 5.0,
+      allpass: [180, 520, 1400, 3200, 6500, 12000],
+      widthMult: 1.38,
+      taps: [{ ms: 13, db: -7 }, { ms: 19, db: -10 }, { ms: 29, db: -13 }, { ms: 41, db: -16 }],
+      height: { notchHz: 8200, notchDb: -3.5, liftHz: 13000, liftDb: 4.5 },
+    },
   };
 
   function setSpaceMode(mode) {
@@ -1815,10 +1930,20 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     return clamp(Math.pow(10, -balanceErrorDb(actual, typical) * strengthDb / 20), 0.78, 1.25);
   }
 
+  // A starting point, not a genre classifier — the four styles are one tap apart
+  // and this only decides which one is already selected when the screen opens.
+  //
+  // Strobe is checked first and deliberately asks for two things at once: a low
+  // end that pulses steadily at a club tempo, AND a top end above the reference
+  // balance. Either on its own is far too common — plenty of songs have a kick on
+  // every beat, and plenty are bright — so requiring both keeps it from firing on
+  // material it would not suit. When it does not fire, picking Strobe by hand is
+  // one tap.
   function recommendPreset(data) {
     const dr = data.dynamicRange;
     const c = data.centroidHz;
 
+    if (data.lowPulse >= 0.80 && data.airRatio >= TYPICAL_BALANCE.air) return 'strobe';
     if (dr > 12) return 'driftwood';           // dynamic, acoustic-leaning material -> warm/nostalgic
     if (c < 900) return 'blackout';            // bass-heavy, dark timbre -> dark & punchy
     if (c > 2600 && dr < 9) return 'chromeline'; // bright + already fairly loud -> catchy/upfront
@@ -2004,7 +2129,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   //     the ear reads it as air and space rather than as a smeared centre.
   function applyStereoImage(ctx, sourceNode, width, bassMono, sideAirDb, space) {
     const spc = space || SPACE_MODES.off;
-    const doSpace = spc.shuffleDb > 0 || spc.allpass.length > 0 || spc.delayMs > 0;
+    const doSpace = spc.shuffleDb > 0 || spc.allpass.length > 0 || spc.taps.length > 0 || !!spc.height;
     const doWidth = Math.abs(width - 1) >= 0.02;
     const doBass = bassMono > 0.02;
     const doAir = Math.abs(sideAirDb) > 0.05;
@@ -2069,26 +2194,49 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       sideNode = ap;
     }
 
-    if (spc.delayMs > 0) {
-      // A quiet, late copy of the sides: reflections arriving a fraction behind
-      // the direct sound, which is the cue the ear reads as room depth. Still
-      // side-only, so the mono sum never sees it.
-      const delay = ctx.createDelay(0.1);
-      delay.delayTime.value = spc.delayMs / 1000;
-      const wet = ctx.createGain();
-      wet.gain.value = Math.pow(10, spc.delayDb / 20);
+    if (spc.height) {
+      // Elevation cue. The outer ear notches sound arriving from in front around
+      // 8 kHz and passes what comes from above, so a dip there with a lift above
+      // it is heard as height rather than as brightness. Applied to the sides
+      // only, so it places the ambience up and around without tilting the centre.
+      const notch = ctx.createBiquadFilter();
+      notch.type = 'peaking';
+      notch.frequency.value = spc.height.notchHz;
+      notch.Q.value = 2.0;
+      notch.gain.value = spc.height.notchDb;
+      sideNode.connect(notch);
+
+      const lift = ctx.createBiquadFilter();
+      lift.type = 'highshelf';
+      lift.frequency.value = spc.height.liftHz;
+      lift.Q.value = 0.7;
+      lift.gain.value = spc.height.liftDb;
+      notch.connect(lift);
+      sideNode = lift;
+    }
+
+    if (spc.taps.length) {
+      // Early reflections. One delayed copy is a slapback; four at falling levels
+      // and unrelated spacings stop reading as a repeat and start reading as a
+      // room around the listener. Side-only, so the mono sum never sees any of it.
       const merge = ctx.createGain();
       sideNode.connect(merge);
-      sideNode.connect(delay);
-      delay.connect(wet);
-      wet.connect(merge);
+      for (const tap of spc.taps) {
+        const delay = ctx.createDelay(0.2);
+        delay.delayTime.value = tap.ms / 1000;
+        const wet = ctx.createGain();
+        wet.gain.value = Math.pow(10, tap.db / 20);
+        sideNode.connect(delay);
+        delay.connect(wet);
+        wet.connect(merge);
+      }
       sideNode = merge;
     }
 
-    // Width is capped: past about 1.6 the sides start to dominate and the track
+    // Width is capped: past this the sides start to dominate and the track
     // hollows out the moment anything sums it.
     const sideScaled = ctx.createGain();
-    sideScaled.gain.value = Math.min(width * spc.widthMult, 1.6);
+    sideScaled.gain.value = Math.min(width * spc.widthMult, 1.85);
     sideNode.connect(sideScaled);
 
     const outL = ctx.createGain();
