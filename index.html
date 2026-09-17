@@ -156,7 +156,18 @@
   .ab-toggle button.active{background:#000000;color:#ffffff;}
 
   .lufs-target{display:none;}
-  .loudness-note{font-size:0.72rem;color:var(--sub);margin-left:auto;text-align:right;}
+
+  /* Three buttons plus a label and a readout do not fit on a phone in one line,
+     so this row wraps and the readout drops underneath instead of squeezing the
+     toggle until the first button is clipped off. */
+  .loudness-row{margin-top:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+  .loudness-row label{font-size:0.78rem;color:var(--sub);white-space:nowrap;}
+  .loudness-row .ab-toggle{flex-shrink:0;}
+  .loudness-note{font-size:0.72rem;color:var(--sub);margin-left:auto;text-align:right;white-space:nowrap;}
+  @media (max-width:560px){
+    .loudness-row .ab-toggle button{padding:9px 12px;font-size:0.76rem;}
+    .loudness-note{margin-left:0;width:100%;text-align:left;}
+  }
 
   .export-row{margin-top:20px;}
   progress{width:100%;height:8px;border-radius:4px;overflow:hidden;accent-color:#000000;}
@@ -242,11 +253,12 @@
       <span class="intval" id="intensityVal">65%</span>
     </div>
 
-    <div class="intensity-row">
+    <div class="loudness-row">
       <label>Loudness</label>
       <div class="ab-toggle" id="loudnessToggle">
         <button id="btnLoud" class="active">Loud</button>
         <button id="btnStreaming">Streaming</button>
+        <button id="btnLoudnessOff">Off</button>
       </div>
       <span class="loudness-note" id="loudnessNote"></span>
     </div>
@@ -625,10 +637,10 @@ function createSignalDsp() {
   // only evaluated in the top tenth of a dB below the ceiling, where it almost
   // never engages after a correct limiter — it exists so nothing can leave this
   // app above the declared ceiling without a hard clip's harsh odd-order spray.
-  function finishSamples(chans, gain, scale, ceiling, sr) {
+  function finishSamples(chans, gain, scale, ceiling, sr, softClip) {
     const n = chans[0].length;
-    const knee = ceiling * 0.9;
-    const span = ceiling - knee;
+    const knee = softClip ? ceiling * 0.9 : Infinity;
+    const span = ceiling - ceiling * 0.9;
     const fin = Math.min(Math.round(sr * 0.002), n >> 1);
     const fout = Math.min(Math.round(sr * 0.006), n >> 1);
     for (let c = 0; c < chans.length; c++) {
@@ -809,38 +821,66 @@ function createSignalDsp() {
     const n = chans[0].length;
     const ceiling = args.ceiling;
     const headroomGain = 1 / args.renderHeadroom;
-
-    // What the chain produced, corrected for the render headroom analytically.
-    const rawLufs = measureLufs(chans, sr);
-    const unityLufs = rawLufs + 20 * Math.log10(headroomGain);
-
-    // Wide but bounded: enough to lift a genuinely quiet recording onto the
-    // target, not so much that a near-silent file gets blown 40 dB up into its
-    // own noise floor.
-    const trim = Math.pow(10, clamp(target - unityLufs, -14, 24) / 20);
-    let scale = headroomGain * trim;
+    const matchLoudness = args.matchLoudness !== false;
 
     const env = new Float32Array(n);
     const refine = createPeakScan(chans, env);
     const gain = new Float32Array(n);
     const L1 = truePeakL1();
+    let scale;
 
-    refine(ceiling / (L1 * scale));
-    buildLimiterGain(env, gain, sr, ceiling, scale);
+    if (matchLoudness) {
+      // What the chain produced, corrected for the render headroom analytically.
+      const rawLufs = measureLufs(chans, sr);
+      const unityLufs = rawLufs + 20 * Math.log10(headroomGain);
 
-    // Limiting always costs a little loudness. Measure what the limited signal
-    // WOULD be, then close the remaining gap before committing to it.
-    const limited = measureLufs(chans, sr, gain, scale);
-    const delta = clamp(target - limited, -4, 4);
-    if (Math.abs(delta) > 0.2) {
-      scale *= Math.pow(10, delta / 20);
-      // A louder target means a lower effective ceiling in source terms, so the
-      // scan may have to look at blocks it was allowed to skip the first time.
+      // Wide but bounded: enough to lift a genuinely quiet recording onto the
+      // target, not so much that a near-silent file gets blown 40 dB up into its
+      // own noise floor.
+      const trim = Math.pow(10, clamp(target - unityLufs, -14, 24) / 20);
+      scale = headroomGain * trim;
+
       refine(ceiling / (L1 * scale));
+      buildLimiterGain(env, gain, sr, ceiling, scale);
+
+      // Limiting always costs a little loudness. Measure what the limited signal
+      // WOULD be, then close the remaining gap before committing to it.
+      const limited = measureLufs(chans, sr, gain, scale);
+      const delta = clamp(target - limited, -4, 4);
+      if (Math.abs(delta) > 0.2) {
+        scale *= Math.pow(10, delta / 20);
+        // A louder target means a lower effective ceiling in source terms, so the
+        // scan may have to look at blocks it was allowed to skip the first time.
+        refine(ceiling / (L1 * scale));
+        buildLimiterGain(env, gain, sr, ceiling, scale);
+      }
+    } else {
+      // No loudness target at all. The only gain applied is the one that puts
+      // the loudest true peak exactly on the ceiling, so the track keeps its own
+      // dynamics and whatever level relationship it arrived with — the limiter
+      // cannot engage, because by construction nothing reaches the ceiling
+      // except the single loudest peak.
+      //
+      // A window whose maximum is below (sample peak / L1) cannot interpolate to
+      // anything as loud as the sample peak, so it cannot hold the true maximum
+      // either. That makes this gate exact for finding it, not just safe.
+      let samplePeak = 0;
+      for (let i = 0; i < n; i++) if (env[i] > samplePeak) samplePeak = env[i];
+      refine(samplePeak / L1);
+      let truePeak = 0;
+      for (let i = 0; i < n; i++) if (env[i] > truePeak) truePeak = env[i];
+
+      // +40 dB is the sanity stop: below that a file is silence or a dead take,
+      // and pulling its dither up to full scale would help nobody.
+      scale = truePeak > 0 ? Math.min(ceiling / truePeak, 100) : headroomGain;
       buildLimiterGain(env, gain, sr, ceiling, scale);
     }
 
-    finishSamples(chans, gain, scale, ceiling, sr);
+    // The safety clip is a net under the limiter. In peak mode the limiter never
+    // engages and the ceiling already holds by arithmetic, so clipping there
+    // would be the one thing in the whole path that touched the dynamics after
+    // the user asked for them to be left alone.
+    finishSamples(chans, gain, scale, ceiling, sr, matchLoudness);
 
     // Hand the page a copy and keep the originals here, so exporting does not
     // have to ship tens of megabytes back across the thread boundary again. The
@@ -1044,6 +1084,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   const targetLufsEl = document.getElementById('targetLufs');
   const btnLoud = document.getElementById('btnLoud');
   const btnStreaming = document.getElementById('btnStreaming');
+  const btnLoudnessOff = document.getElementById('btnLoudnessOff');
   const loudnessNote = document.getElementById('loudnessNote');
 
   const playBtn = document.getElementById('playBtn');
@@ -1349,11 +1390,23 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   // Apple's Sound Check land, and a -1.5 dBTP ceiling for real headroom through
   // a lossy encoder. Loud mode is unchanged, for anything going somewhere that
   // does not normalise.
-  const STREAMING_TARGET = { targetLufs: -14.0, ceilingDb: -1.5 };
+  const STREAMING_TARGET = { targetLufs: -14.0, ceilingDb: -1.5, matchLoudness: true };
+
+  // Off: no loudness target at all. The style still does everything it does —
+  // multiband, EQ, saturation, width, glue — and the only level decision left is
+  // putting the loudest true peak on the ceiling, so the track keeps its own
+  // dynamics and the limiter never engages. Two different songs come out at two
+  // different loudnesses, which is the point.
+  const NO_TARGET = { targetLufs: null, ceilingDb: -1.0, matchLoudness: false };
 
   function effectiveTarget(preset) {
     if (loudnessMode === 'streaming') return STREAMING_TARGET;
-    return { targetLufs: preset.targetLufs, ceilingDb: preset.ceilingDb !== undefined ? preset.ceilingDb : -1 };
+    if (loudnessMode === 'off') return NO_TARGET;
+    return {
+      targetLufs: preset.targetLufs,
+      ceilingDb: preset.ceilingDb !== undefined ? preset.ceilingDb : -1,
+      matchLoudness: true,
+    };
   }
 
   function setLoudnessMode(mode) {
@@ -1361,6 +1414,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     loudnessMode = mode;
     btnLoud.classList.toggle('active', mode === 'loud');
     btnStreaming.classList.toggle('active', mode === 'streaming');
+    btnLoudnessOff.classList.toggle('active', mode === 'off');
     invalidateMaster();
     refreshTargetLabel();
     scheduleSpeculativeMaster();
@@ -1369,12 +1423,15 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   function refreshTargetLabel() {
     if (!currentPreset) { loudnessNote.textContent = ''; return; }
     const t = effectiveTarget(currentPreset);
-    targetLufsEl.textContent = `${t.targetLufs} LUFS`;
-    loudnessNote.textContent = `${t.targetLufs.toFixed(1)} LUFS · ${t.ceilingDb.toFixed(1)} dBTP`;
+    targetLufsEl.textContent = t.targetLufs === null ? 'no target' : `${t.targetLufs} LUFS`;
+    loudnessNote.textContent = t.targetLufs === null
+      ? `peak → ${t.ceilingDb.toFixed(1)} dBTP`
+      : `${t.targetLufs.toFixed(1)} LUFS · ${t.ceilingDb.toFixed(1)} dBTP`;
   }
 
   btnLoud.addEventListener('click', () => setLoudnessMode('loud'));
   btnStreaming.addEventListener('click', () => setLoudnessMode('streaming'));
+  btnLoudnessOff.addEventListener('click', () => setLoudnessMode('off'));
 
   intensitySlider.addEventListener('input', () => {
     currentIntensity = intensitySlider.value / 100;
@@ -2046,7 +2103,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     const preset = currentPreset;
     const intensity = currentIntensity;
     const sr = originalBuffer.sampleRate;
-    const { targetLufs, ceilingDb } = effectiveTarget(preset);
+    const { targetLufs, ceilingDb, matchLoudness } = effectiveTarget(preset);
 
     report('Mastering …');
     let rendered;
@@ -2070,6 +2127,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
         id: audioId,
         sampleRate: sr,
         targetLufs,
+        matchLoudness,
         // Small guard under the declared ceiling. 4x oversampling is what
         // BS.1770-4 itself specifies and it still reads a touch low against a 32x
         // reference (measured: within 0.08 dB with these kernels), and the
