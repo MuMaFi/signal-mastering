@@ -1,0 +1,125 @@
+plugins {
+    id 'java'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+// Minecraft 26.2 wird unobfuskiert ausgeliefert. Damit entfaellt jedes Remapping,
+// und der Mod kann direkt gegen das Vanilla-Jar uebersetzt werden - kein Loom,
+// keine Mappings. Alle Abhaengigkeiten kommen per SHA1-gepinnter URL, damit der
+// Build reproduzierbar ist und keine Maven-Aufloesung braucht.
+
+def depsRoot     = layout.buildDirectory.dir('deps').get().asFile
+def mcLibsDir    = new File(depsRoot, 'minecraft')
+def fabricDir    = new File(depsRoot, 'fabric')
+def fabricApiDir = new File(depsRoot, 'fabric-api')
+def clientJar    = new File(depsRoot, "minecraft-${project.minecraft_version}-client.jar")
+
+/** Laedt eine Datei, falls nicht vorhanden, und prueft die SHA1-Summe. */
+static void fetch(Object logger, File target, String url, String sha1) {
+    target.parentFile.mkdirs()
+    if (!target.exists()) {
+        logger.lifecycle("Lade ${target.name}")
+        new URI(url).toURL().withInputStream { input ->
+            target.withOutputStream { output -> output << input }
+        }
+    }
+    def actual = java.security.MessageDigest.getInstance('SHA-1')
+            .digest(target.bytes).encodeHex().toString()
+    if (actual != sha1) {
+        target.delete()
+        throw new GradleException("SHA1 stimmt nicht fuer ${target.name}: erwartet ${sha1}, war ${actual}")
+    }
+}
+
+/** Liest eine Liste aus "sha1␣␣url"-Zeilen. */
+static List<List<String>> readPinList(File file) {
+    file.readLines()
+            .findAll { !it.trim().isEmpty() && !it.trim().startsWith('#') }
+            .collect { line ->
+                def parts = line.trim().split(/\s+/, 2)
+                [parts[0], parts[1]]
+            }
+}
+
+tasks.register('downloadMinecraft') {
+    description = 'Laedt das unobfuskierte Minecraft-Client-Jar.'
+    outputs.file(clientJar)
+    doLast {
+        fetch(logger, clientJar, project.minecraft_client_url, project.minecraft_client_sha1)
+    }
+}
+
+tasks.register('downloadMinecraftLibraries') {
+    description = 'Laedt die Bibliotheken, die Minecraft 26.2 selbst verwendet.'
+    def pinList = file('minecraft-libraries.txt')
+    inputs.file(pinList)
+    outputs.dir(mcLibsDir)
+    doLast {
+        def dir = mcLibsDir
+        readPinList(pinList).each { sha1, url ->
+            fetch(logger, new File(dir, url.substring(url.lastIndexOf('/') + 1)), url, sha1)
+        }
+    }
+}
+
+tasks.register('downloadFabric') {
+    description = 'Laedt Fabric Loader und Fabric API und packt die API-Module aus.'
+    def pinList = file('fabric-libraries.txt')
+    inputs.file(pinList)
+    outputs.dir(fabricDir)
+    outputs.dir(fabricApiDir)
+    doLast {
+        def dir = fabricDir
+        def apiDir = fabricApiDir
+        apiDir.mkdirs()
+        readPinList(pinList).each { sha1, url ->
+            def name = java.net.URLDecoder.decode(url.substring(url.lastIndexOf('/') + 1), 'UTF-8')
+            def target = new File(dir, name)
+            fetch(logger, target, url, sha1)
+
+            // Fabric API buendelt seine Module als Jar-in-Jar.
+            if (name.startsWith('fabric-api-')) {
+                copy {
+                    from zipTree(target).matching { include 'META-INF/jars/*.jar' }
+                    eachFile { it.path = it.name }
+                    includeEmptyDirs = false
+                    into apiDir
+                }
+            }
+        }
+    }
+}
+
+def clientJarFiles = files(clientJar).builtBy('downloadMinecraft')
+def mcLibsTree     = fileTree(dir: mcLibsDir, include: '*.jar').builtBy('downloadMinecraftLibraries')
+def fabricTree     = fileTree(dir: fabricDir, include: '*.jar').builtBy('downloadFabric')
+def fabricApiTree  = fileTree(dir: fabricApiDir, include: '*.jar').builtBy('downloadFabric')
+
+dependencies {
+    compileOnly clientJarFiles
+    compileOnly mcLibsTree
+    compileOnly fabricTree
+    compileOnly fabricApiTree
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('processResources', ProcessResources) {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') {
+        expand 'version': project.version
+    }
+}
+
+tasks.named('jar', Jar) {
+    archiveBaseName = project.archives_base_name
+}
