@@ -311,8 +311,8 @@
 
     <div class="intensity-row">
       <label>Intensity</label>
-      <input type="range" id="intensitySlider" min="0" max="100" value="65">
-      <span class="intval" id="intensityVal">65%</span>
+      <input type="range" id="intensitySlider" min="0" max="100" value="75">
+      <span class="intval" id="intensityVal">75%</span>
     </div>
 
     <div class="loudness-row">
@@ -323,6 +323,16 @@
         <button id="btnLoudnessOff">Off</button>
       </div>
       <span class="loudness-note" id="loudnessNote"></span>
+    </div>
+
+    <div class="loudness-row">
+      <label>Space</label>
+      <div class="ab-toggle" id="spaceToggle">
+        <button id="btnSpaceOff" class="active">Off</button>
+        <button id="btnSpaceWide">Wide</button>
+        <button id="btnSpaceImmersive">Immersive</button>
+      </div>
+      <span class="loudness-note" id="spaceNote"></span>
     </div>
 
     <div class="lufs-target">Target loudness: <b id="targetLufs">−11 LUFS</b> (optimized for streaming)</div>
@@ -1148,6 +1158,10 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   const btnStreaming = document.getElementById('btnStreaming');
   const btnLoudnessOff = document.getElementById('btnLoudnessOff');
   const loudnessNote = document.getElementById('loudnessNote');
+  const btnSpaceOff = document.getElementById('btnSpaceOff');
+  const btnSpaceWide = document.getElementById('btnSpaceWide');
+  const btnSpaceImmersive = document.getElementById('btnSpaceImmersive');
+  const spaceNote = document.getElementById('spaceNote');
 
   const playBtn = document.getElementById('playBtn');
   const btnOrig = document.getElementById('btnOrig');
@@ -1163,7 +1177,12 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   let originalBuffer = null;
   let analysisData = null;
   let currentPreset = null;
-  let currentIntensity = 0.65;
+  // 65% was the default while the chain carried a +7.4 dB resonance at the
+  // 200 Hz crossover and a limiter that flattened the level spread to under 2 dB.
+  // With both of those gone the same amount of audible mastering needs a higher
+  // setting: measured on the same track, 75% now puts the tonal work back at
+  // exactly where the old engine sat.
+  let currentIntensity = 0.75;
   let playGraph = null;  // { orig, master, sources[], gains[], startedAt }
   let playMode = 'orig'; // 'orig' | 'mastered'
   let isPlaying = false;
@@ -1177,7 +1196,8 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   // The finished master, rendered once. Preview and export both play/encode THIS
   // buffer, so what you hear in the A/B is bit-for-bit what lands in the file.
   let masteredBuffer = null;
-  let loudnessMode = 'loud';  // 'loud' | 'streaming'
+  let loudnessMode = 'loud';  // 'loud' | 'streaming' | 'off'
+  let spaceMode = 'off';      // 'off' | 'wide' | 'immersive'
   let masteredBufferId = 0;  // ties the page's master to the worker's cached copy
   let masterAudioSeq = 0;
   let masterRun = null;      // in-flight mastering promise, if any
@@ -1292,6 +1312,14 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   // LANDR, Dolby.io and BandLab's mastering engines are built from.
   //
   // Bands: low <110Hz | lowMid 110-900Hz | highMid 900-5200Hz | air >5200Hz
+  //
+  // These were re-voiced after the crossover Q fix. The old chain had a +7.4 dB
+  // resonant peak sitting on the 200 Hz crossover and a limiter that flattened
+  // the short-term level spread from 8 dB down to under 2 — so a large part of
+  // what "mastered" sounded like was a bug and a squash, identical on all four
+  // styles. With both gone the presets were doing barely 1 dB RMS of tonal work
+  // and every style sounded like every other. The moves below are deliberately
+  // bigger and, more importantly, point in different directions per style.
   const PRESETS = [
     {
       id: 'blackout',
@@ -1300,22 +1328,23 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       targetLufs: -9.8,
       ceilingDb: -1.0,
       bands: {
-        low:     { thresh: -25, ratio: 4.6, attack: 0.020, release: 0.26, makeup: 2.05 },
-        lowMid:  { thresh: -21, ratio: 3.0, attack: 0.012, release: 0.20, makeup: 1.18 },
-        highMid: { thresh: -19, ratio: 2.3, attack: 0.008, release: 0.15, makeup: 1.00 },
-        air:     { thresh: -23, ratio: 3.0, attack: 0.002, release: 0.08, makeup: 0.94 },
+        low:     { thresh: -27, ratio: 5.0, attack: 0.018, release: 0.24, makeup: 2.40 },
+        lowMid:  { thresh: -22, ratio: 3.2, attack: 0.012, release: 0.20, makeup: 1.22 },
+        highMid: { thresh: -20, ratio: 2.6, attack: 0.008, release: 0.15, makeup: 1.02 },
+        air:     { thresh: -24, ratio: 3.4, attack: 0.002, release: 0.08, makeup: 0.86 },
       },
       eq: [
-        { freq: 75,    gain: 2.2,  type: 'lowshelf',  Q: 0.7 },
-        { freq: 3200,  gain: -1.8, type: 'peaking',   Q: 1.0 },
-        { freq: 9500,  gain: 0.3,  type: 'highshelf', Q: 0.7 },
+        { freq: 70,    gain: 4.2,  type: 'lowshelf',  Q: 0.7 },
+        { freq: 220,   gain: 1.7,  type: 'peaking',   Q: 0.9 },
+        { freq: 3400,  gain: -2.8, type: 'peaking',   Q: 1.1 },
+        { freq: 9000,  gain: -1.4, type: 'highshelf', Q: 0.7 },
       ],
-      saturation: 0.34,
+      saturation: 0.52,
       air: 0.05,
-      stereoWidth: 0.78,
+      stereoWidth: 0.82,
       bassMono: 0.85,
       sideAir: 0.4,
-      glue: { thresh: -15, ratio: 4.4, attack: 0.012, release: 0.22 },
+      glue: { thresh: -17, ratio: 4.8, attack: 0.012, release: 0.22 },
     },
     {
       id: 'chromeline',
@@ -1324,22 +1353,23 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       targetLufs: -9.2,
       ceilingDb: -1.0,
       bands: {
-        low:     { thresh: -21, ratio: 3.6, attack: 0.010, release: 0.17, makeup: 1.40 },
-        lowMid:  { thresh: -19, ratio: 3.4, attack: 0.006, release: 0.12, makeup: 1.18 },
-        highMid: { thresh: -18, ratio: 3.2, attack: 0.004, release: 0.10, makeup: 1.16 },
-        air:     { thresh: -22, ratio: 3.4, attack: 0.0015, release: 0.07, makeup: 1.08 },
+        low:     { thresh: -22, ratio: 3.8, attack: 0.010, release: 0.17, makeup: 1.32 },
+        lowMid:  { thresh: -20, ratio: 3.6, attack: 0.006, release: 0.12, makeup: 1.06 },
+        highMid: { thresh: -19, ratio: 3.4, attack: 0.004, release: 0.10, makeup: 1.34 },
+        air:     { thresh: -23, ratio: 3.6, attack: 0.0015, release: 0.07, makeup: 1.42 },
       },
       eq: [
-        { freq: 3000,  gain: 2.2, type: 'peaking',   Q: 1.0 },
-        { freq: 6500,  gain: 1.4, type: 'peaking',   Q: 1.1 },
-        { freq: 11000, gain: 1.6, type: 'highshelf', Q: 0.7 },
+        { freq: 180,   gain: -2.8, type: 'peaking',   Q: 0.8 },
+        { freq: 3200,  gain: 4.2,  type: 'peaking',   Q: 0.9 },
+        { freq: 6500,  gain: 2.2,  type: 'peaking',   Q: 1.1 },
+        { freq: 11000, gain: 4.4,  type: 'highshelf', Q: 0.7 },
       ],
-      saturation: 0.30,
-      air: 0.35,
-      stereoWidth: 1.14,
+      saturation: 0.40,
+      air: 0.55,
+      stereoWidth: 1.34,
       bassMono: 0.7,
-      sideAir: 1.4,
-      glue: { thresh: -14, ratio: 4.6, attack: 0.003, release: 0.09 },
+      sideAir: 2.2,
+      glue: { thresh: -16, ratio: 5.0, attack: 0.003, release: 0.09 },
     },
     {
       id: 'driftwood',
@@ -1348,22 +1378,23 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       targetLufs: -12.5,
       ceilingDb: -1.0,
       bands: {
-        low:     { thresh: -23, ratio: 2.0, attack: 0.024, release: 0.34, makeup: 1.35 },
-        lowMid:  { thresh: -22, ratio: 1.8, attack: 0.020, release: 0.28, makeup: 1.12 },
-        highMid: { thresh: -21, ratio: 1.6, attack: 0.016, release: 0.22, makeup: 0.98 },
-        air:     { thresh: -24, ratio: 2.2, attack: 0.003, release: 0.10, makeup: 0.90 },
+        low:     { thresh: -24, ratio: 2.2, attack: 0.024, release: 0.34, makeup: 1.46 },
+        lowMid:  { thresh: -23, ratio: 2.0, attack: 0.020, release: 0.28, makeup: 1.30 },
+        highMid: { thresh: -22, ratio: 1.8, attack: 0.016, release: 0.22, makeup: 0.97 },
+        air:     { thresh: -25, ratio: 2.4, attack: 0.003, release: 0.10, makeup: 0.78 },
       },
       eq: [
-        { freq: 250,  gain: 1.6,  type: 'peaking',   Q: 0.8 },
-        { freq: 900,  gain: 0.8,  type: 'peaking',   Q: 0.8 },
-        { freq: 8000, gain: -1.4, type: 'highshelf', Q: 0.7 },
+        { freq: 120,   gain: 1.5,  type: 'lowshelf',  Q: 0.7 },
+        { freq: 260,   gain: 2.8,  type: 'peaking',   Q: 0.8 },
+        { freq: 1900,  gain: -1.1, type: 'peaking',   Q: 1.0 },
+        { freq: 7500,  gain: -3.4, type: 'highshelf', Q: 0.7 },
       ],
-      saturation: 0.22,
+      saturation: 0.46,
       air: 0.06,
-      stereoWidth: 0.98,
+      stereoWidth: 1.02,
       bassMono: 0.6,
       sideAir: 0.2,
-      glue: { thresh: -21, ratio: 2.2, attack: 0.028, release: 0.34 },
+      glue: { thresh: -22, ratio: 2.6, attack: 0.028, release: 0.34 },
     },
     {
       id: 'halo',
@@ -1372,22 +1403,23 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       targetLufs: -11.2,
       ceilingDb: -1.0,
       bands: {
-        low:     { thresh: -22, ratio: 2.4, attack: 0.016, release: 0.26, makeup: 1.25 },
-        lowMid:  { thresh: -21, ratio: 2.0, attack: 0.013, release: 0.22, makeup: 1.06 },
-        highMid: { thresh: -20, ratio: 1.8, attack: 0.010, release: 0.17, makeup: 1.04 },
-        air:     { thresh: -23, ratio: 2.6, attack: 0.002, release: 0.08, makeup: 1.02 },
+        low:     { thresh: -23, ratio: 2.6, attack: 0.016, release: 0.26, makeup: 1.34 },
+        lowMid:  { thresh: -22, ratio: 2.2, attack: 0.013, release: 0.22, makeup: 0.98 },
+        highMid: { thresh: -21, ratio: 2.0, attack: 0.010, release: 0.17, makeup: 1.16 },
+        air:     { thresh: -24, ratio: 2.8, attack: 0.002, release: 0.08, makeup: 1.34 },
       },
       eq: [
-        { freq: 700,   gain: -0.6, type: 'peaking',   Q: 0.9 },
-        { freq: 3200,  gain: 0.6,  type: 'peaking',   Q: 1.0 },
-        { freq: 11000, gain: 1.8,  type: 'highshelf', Q: 0.7 },
+        { freq: 60,    gain: 1.1,  type: 'lowshelf',  Q: 0.7 },
+        { freq: 400,   gain: -2.4, type: 'peaking',   Q: 0.9 },
+        { freq: 3000,  gain: 2.5,  type: 'peaking',   Q: 0.9 },
+        { freq: 11000, gain: 4.0,  type: 'highshelf', Q: 0.7 },
       ],
-      saturation: 0.16,
-      air: 0.22,
-      stereoWidth: 1.12,
+      saturation: 0.24,
+      air: 0.42,
+      stereoWidth: 1.30,
       bassMono: 0.75,
-      sideAir: 1.0,
-      glue: { thresh: -20, ratio: 2.4, attack: 0.016, release: 0.26 },
+      sideAir: 2.0,
+      glue: { thresh: -21, ratio: 2.8, attack: 0.016, release: 0.26 },
     },
   ];
 
@@ -1438,8 +1470,52 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   }
 
   function selectionKey() {
-    return currentPreset ? currentPreset.id + '@' + currentIntensity + '@' + loudnessMode : null;
+    return currentPreset
+      ? currentPreset.id + '@' + currentIntensity + '@' + loudnessMode + '@' + spaceMode
+      : null;
   }
+
+  // ---------- Space ----------
+  // Depth and envelopment from an ordinary stereo file, without a surround file
+  // nobody can play and without breaking on a phone speaker.
+  //
+  // The whole design rests on one identity: a mono downmix is L+R, and with
+  // L = M+S and R = M-S that is exactly 2M. Anything done to the SIDE signal
+  // alone therefore vanishes in mono instead of comb-filtering it. So the mid
+  // signal is not touched at all here and mono compatibility is not a tuning
+  // question, it is arithmetic.
+  //
+  //   shuffleDb  raises the side level where the ear reads width most readily
+  //              (Blumlein's shuffler, a few hundred Hz), above the bass that
+  //              stays mono for a tight low end.
+  //   allpass    staggered phase rotation across the band, which decorrelates
+  //              the sides from the centre without altering their level, so the
+  //              image becomes diffuse rather than merely louder at the edges.
+  //   delayMs    a quiet, delayed copy of the sides only — reflections arriving
+  //              slightly late, which is what reads as room depth.
+  //
+  // What mono loses is not distortion but content: side energy is absent there.
+  // That is the real cost, and it is measured rather than assumed.
+  const SPACE_MODES = {
+    off:       { label: 'dry',       shuffleDb: 0,   allpass: [],                     widthMult: 1,    delayMs: 0,  delayDb: 0 },
+    wide:      { label: 'wider',     shuffleDb: 2.0, allpass: [320, 1500],            widthMult: 1.10, delayMs: 0,  delayDb: 0 },
+    immersive: { label: 'enveloping',shuffleDb: 4.2, allpass: [260, 900, 3000, 8000], widthMult: 1.26, delayMs: 15, delayDb: -7.5 },
+  };
+
+  function setSpaceMode(mode) {
+    if (spaceMode === mode) return;
+    spaceMode = mode;
+    btnSpaceOff.classList.toggle('active', mode === 'off');
+    btnSpaceWide.classList.toggle('active', mode === 'wide');
+    btnSpaceImmersive.classList.toggle('active', mode === 'immersive');
+    invalidateMaster();
+    refreshTargetLabel();
+    scheduleSpeculativeMaster();
+  }
+
+  btnSpaceOff.addEventListener('click', () => setSpaceMode('off'));
+  btnSpaceWide.addEventListener('click', () => setSpaceMode('wide'));
+  btnSpaceImmersive.addEventListener('click', () => setSpaceMode('immersive'));
 
   // Every streaming service normalises playback loudness, so a master pushed to
   // -9 LUFS is simply turned back down on the way to the listener — the dynamics
@@ -1489,6 +1565,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     loudnessNote.textContent = t.targetLufs === null
       ? `peak → ${t.ceilingDb.toFixed(1)} dBTP`
       : `${t.targetLufs.toFixed(1)} LUFS · ${t.ceilingDb.toFixed(1)} dBTP`;
+    spaceNote.textContent = spaceMode === 'off' ? 'mono-safe' : 'sides only · mono-safe';
   }
 
   btnLoud.addEventListener('click', () => setLoudnessMode('loud'));
@@ -1553,6 +1630,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     masterToken++;
     clearTimeout(speculativeTimer);
     loudnessNote.textContent = '';
+    spaceNote.textContent = '';
     setPlayMode('orig');
     filebar.classList.remove('show');
     showOnly(null);
@@ -1924,11 +2002,13 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   //     need this; a wide sub is a cancelled sub);
   //   * the side channel gets a high shelf, so the width that IS added lands where
   //     the ear reads it as air and space rather than as a smeared centre.
-  function applyStereoImage(ctx, sourceNode, width, bassMono, sideAirDb) {
+  function applyStereoImage(ctx, sourceNode, width, bassMono, sideAirDb, space) {
+    const spc = space || SPACE_MODES.off;
+    const doSpace = spc.shuffleDb > 0 || spc.allpass.length > 0 || spc.delayMs > 0;
     const doWidth = Math.abs(width - 1) >= 0.02;
     const doBass = bassMono > 0.02;
     const doAir = Math.abs(sideAirDb) > 0.05;
-    if (!doWidth && !doBass && !doAir) return sourceNode;
+    if (!doWidth && !doBass && !doAir && !doSpace) return sourceNode;
 
     const splitter = ctx.createChannelSplitter(2);
     sourceNode.connect(splitter);
@@ -1962,7 +2042,53 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       sideNode = airShelf;
     }
 
-    const sideScaled = ctx.createGain(); sideScaled.gain.value = width;
+    // --- Space: everything below runs on the side signal only, which is what
+    // makes it disappear cleanly in a mono downmix instead of fighting it. ---
+    if (spc.shuffleDb > 0) {
+      // Blumlein's shuffler: lift the sides in the band where width reads most
+      // strongly, sitting above the bass that the mono shelf has just tightened.
+      const shuffle = ctx.createBiquadFilter();
+      shuffle.type = 'peaking';
+      shuffle.frequency.value = 420;
+      shuffle.Q.value = 0.7;
+      shuffle.gain.value = spc.shuffleDb;
+      sideNode.connect(shuffle);
+      sideNode = shuffle;
+    }
+
+    for (const freq of spc.allpass) {
+      // Staggered all-pass stages rotate the sides' phase across the band
+      // without touching their level, so the image spreads and diffuses rather
+      // than simply getting louder at the edges. A low Q keeps the rotation
+      // broad, which avoids smearing transients.
+      const ap = ctx.createBiquadFilter();
+      ap.type = 'allpass';
+      ap.frequency.value = freq;
+      ap.Q.value = 0.5;
+      sideNode.connect(ap);
+      sideNode = ap;
+    }
+
+    if (spc.delayMs > 0) {
+      // A quiet, late copy of the sides: reflections arriving a fraction behind
+      // the direct sound, which is the cue the ear reads as room depth. Still
+      // side-only, so the mono sum never sees it.
+      const delay = ctx.createDelay(0.1);
+      delay.delayTime.value = spc.delayMs / 1000;
+      const wet = ctx.createGain();
+      wet.gain.value = Math.pow(10, spc.delayDb / 20);
+      const merge = ctx.createGain();
+      sideNode.connect(merge);
+      sideNode.connect(delay);
+      delay.connect(wet);
+      wet.connect(merge);
+      sideNode = merge;
+    }
+
+    // Width is capped: past about 1.6 the sides start to dominate and the track
+    // hollows out the moment anything sums it.
+    const sideScaled = ctx.createGain();
+    sideScaled.gain.value = Math.min(width * spc.widthMult, 1.6);
     sideNode.connect(sideScaled);
 
     const outL = ctx.createGain();
@@ -2082,9 +2208,11 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     const airAdapt = analysisData ? adaptiveMultiplier(analysisData.airRatio, TYPICAL_BALANCE.air) : 1;
     node = applyExciter(ctx, node, preset.air * intensity * airAdapt);
 
-    // 6) Stereo image — width above, mono below.
+    // 6) Stereo image — width above, mono below, and the optional Space stage
+    // that works on the sides alone so a mono downmix is untouched by it.
     const width = 1 + (preset.stereoWidth - 1) * intensity;
-    node = applyStereoImage(ctx, node, width, preset.bassMono * intensity, preset.sideAir * intensity);
+    node = applyStereoImage(ctx, node, width, preset.bassMono * intensity,
+                            preset.sideAir * intensity, SPACE_MODES[spaceMode] || SPACE_MODES.off);
 
     // 7) Bus compressor ("glue") — plain serial compression. (An earlier version of
     // this ran it as a parallel dry/compressed blend for extra punch, but a
@@ -2193,10 +2321,12 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
         // Small guard under the declared ceiling. 4x oversampling is what
         // BS.1770-4 itself specifies and it still reads a touch low against a 32x
         // reference (measured: within 0.08 dB with these kernels), and the
-        // limiter's gain curve is not perfectly constant across a kernel span.
-        // The guard covers both, so a master that says -1.0 dBTP really does
-        // measure at or below -1.0 dBTP on a stricter meter than this one.
-        ceiling: Math.pow(10, (ceilingDb - 0.3) / 20),
+        // limiter's gain curve is not perfectly constant across the span a kernel
+        // reads — the harder the limiter works, the faster that curve moves and
+        // the looser that approximation gets. 0.3 dB was enough while the presets
+        // were gentle and went 0.02 dB over once they started pushing properly.
+        // 0.5 dB covers it with room, costing 0.2 dB of peak level and no loudness.
+        ceiling: Math.pow(10, (ceilingDb - 0.5) / 20),
         renderHeadroom: RENDER_HEADROOM,
       }, transferListOf(channels));
     } catch (err) {
