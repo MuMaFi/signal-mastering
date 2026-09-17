@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>signal.</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -51,7 +55,6 @@
     transition:transform .18s;
     margin-bottom:20px;
   }
-  .dropzone:hover{transform:translateY(-2px);}
   .dropzone.drag{background:#f5f5f5;}
   .dropzone p{margin:0;color:var(--sub);font-size:0.9rem;}
   .dropzone strong{color:var(--text);font-size:1.05rem;}
@@ -77,7 +80,6 @@
     font-family:'IBM Plex Mono',monospace;
     transition:background .15s;
   }
-  .filebar button:hover{background:#f0f0f0;}
 
   section{
     position:relative;
@@ -114,7 +116,6 @@
     background:#ffffff;border:1px solid var(--line);border-left:1px solid var(--line);border-radius:10px;
     padding:17px 15px;cursor:pointer;transition:background .15s, transform .15s;
   }
-  .preset:hover{transform:translateY(-3px);}
   .preset.active{background:#000000;}
   .preset.active .pname, .preset.active .pdesc{color:#ffffff;}
   .preset .pname{font-weight:600;font-size:0.98rem;margin-bottom:5px;letter-spacing:0.01em;}
@@ -134,10 +135,8 @@
     display:inline-flex;align-items:center;gap:8px;
     transition:transform .12s, background .12s;
   }
-  .btn:hover{background:#222222;}
   .btn:active{transform:translateY(1px);}
   .btn.secondary{background:transparent;border:1px solid var(--line);color:var(--text);}
-  .btn.secondary:hover{background:#f0f0f0;}
   .stop-icon{
     display:inline-block; width:12px; height:12px; position:relative; vertical-align:middle;
   }
@@ -172,6 +171,68 @@
   .export-row{margin-top:20px;}
   progress{width:100%;height:8px;border-radius:4px;overflow:hidden;accent-color:#000000;}
   .hint{display:none;}
+
+  /* ======================================================
+     Touch and small screens
+     ====================================================== */
+
+  /* Hover styling belongs to devices that can actually hover. On a touch screen
+     :hover latches after a tap and leaves buttons stuck in a highlighted state. */
+  @media (hover: hover) and (pointer: fine){
+    .dropzone:hover{transform:translateY(-2px);}
+    .preset:hover{transform:translateY(-3px);}
+    .btn:hover{background:#222222;}
+    .btn.secondary:hover{background:#f0f0f0;}
+    .filebar button:hover{background:#f0f0f0;}
+  }
+
+  .drop-touch{display:none;}
+  @media (hover: none){
+    .drop-pointer{display:none;}
+    .drop-touch{display:block;}
+  }
+
+  html{-webkit-text-size-adjust:100%;}
+  button, .preset, .dropzone, input[type=range], .ab-toggle{
+    -webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
+  }
+  .preset:active{transform:scale(0.985);}
+
+  /* Anything you hit with a finger gets a 44px target, the size at which a tap
+     stops being a guess. The visuals are unchanged on a mouse. */
+  @media (pointer: coarse){
+    .btn{padding:14px 24px;min-height:48px;}
+    .ab-toggle button{padding:13px 16px;min-height:46px;}
+    .filebar button{padding:11px 16px;min-height:44px;}
+    .preset{padding:16px 14px;}
+    /* Keeping the native appearance keeps accent-color's filled track; the extra
+       height is purely a bigger place to put a thumb on. */
+    input[type=range]{height:44px;}
+  }
+
+  /* Four stacked tiles is a lot of scrolling on a phone for what is one choice. */
+  @media (max-width:560px){
+    body{padding-top:28px;}
+    .wrap{max-width:100%;}
+    section{padding:18px 16px;}
+    .presets{grid-template-columns:repeat(2,1fr);gap:10px;}
+    .preset{padding:14px 12px;}
+    .preset .pname{font-size:0.9rem;}
+    .preset .pdesc{font-size:0.72rem;}
+    .dropzone{padding:34px 16px;}
+    .export-row .btn{flex:1 1 auto;justify-content:center;}
+    .playbar{gap:10px;}
+  }
+
+  /* Notched and rounded displays: keep content clear of the cutouts. */
+  @supports (padding: max(0px)){
+    body{
+      padding-left:max(16px, env(safe-area-inset-left));
+      padding-right:max(16px, env(safe-area-inset-right));
+      padding-bottom:max(80px, calc(40px + env(safe-area-inset-bottom)));
+    }
+  }
 
   /* ---------- Intro overlay ---------- */
   #introOverlay{
@@ -230,7 +291,8 @@
   </header>
 
   <div class="dropzone" id="dropzone">
-    <p><strong>Drop your track here</strong> or click to browse</p>
+    <p class="drop-pointer"><strong>Drop your track here</strong> or click to browse</p>
+    <p class="drop-touch"><strong>Tap to choose a track</strong></p>
     <input type="file" id="fileInput" accept="audio/*">
   </div>
 
@@ -2317,6 +2379,23 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     return m + ':' + sec.toString().padStart(2, '0');
   }
 
+  // Android's back gesture, when the app shell is hosting this page. Without it
+  // one stray swipe on the result screen closes the app and throws the finished
+  // master away. Returns true when it handled the press.
+  window.signalHandleBack = function () {
+    if (resultSection.classList.contains('show')) {
+      stopPlayback();
+      showOnly(presetSection);
+      scheduleSpeculativeMaster();
+      return true;
+    }
+    if (presetSection.classList.contains('show') && originalBuffer) {
+      resetAll();
+      return true;
+    }
+    return false;
+  };
+
   // ================================================================
   //  EXPORT
   // ================================================================
@@ -2332,12 +2411,52 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     return masteredBuffer;
   }
 
-  function downloadBlob(blob, extension) {
+  // An Android WebView cannot download a blob: URL — the anchor below simply does
+  // nothing there. When the app shell is present the bytes are handed to it in
+  // chunks instead and written straight into the Downloads folder. Chunked
+  // because a mastered WAV runs to tens of megabytes and base64 of the whole
+  // thing in one string would hold the file several times over at once.
+  const NATIVE_CHUNK = 256 * 1024;
+
+  function bytesToBase64(bytes) {
+    let binary = '';
+    const step = 0x8000; // String.fromCharCode has an argument-count limit
+    for (let i = 0; i < bytes.length; i += step) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+    }
+    return btoa(binary);
+  }
+
+  async function saveViaNative(blob, filename) {
+    const id = window.SignalNative.beginFile(filename, blob.type || 'application/octet-stream');
+    if (!id) { window.SignalNative.reportFailure(); return; }
+    try {
+      for (let offset = 0; offset < blob.size; offset += NATIVE_CHUNK) {
+        const part = new Uint8Array(await blob.slice(offset, offset + NATIVE_CHUNK).arrayBuffer());
+        if (!window.SignalNative.writeChunk(id, bytesToBase64(part))) {
+          window.SignalNative.reportFailure();
+          return;
+        }
+        exportProgress.value = Math.min(99, 60 + Math.round((offset / blob.size) * 39));
+      }
+      if (!window.SignalNative.endFile(id)) window.SignalNative.reportFailure();
+    } catch (err) {
+      window.SignalNative.abortFile(id);
+      window.SignalNative.reportFailure();
+    }
+  }
+
+  const hasNativeSave = () => !!(window.SignalNative && typeof window.SignalNative.beginFile === 'function');
+
+  async function downloadBlob(blob, extension) {
+    const baseName = fname.textContent.replace(/\.[^/.]+$/, '');
+    const filename = `${baseName}_${currentPreset.name}.${extension}`;
+    if (hasNativeSave()) return saveViaNative(blob, filename);
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    const baseName = fname.textContent.replace(/\.[^/.]+$/, '');
     a.href = url;
-    a.download = `${baseName}_${currentPreset.name}.${extension}`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -2434,7 +2553,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     const buffer = await masterForExport();
     if (buffer) {
       exportProgress.value = 60;
-      downloadBlob(await encodeWavBlob(24), 'wav');
+      await downloadBlob(await encodeWavBlob(24), 'wav');
       exportProgress.value = 100;
     }
     finishExport();
@@ -2489,7 +2608,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
         }
         exportProgress.value = 95;
         const id3Tag = buildId3v2Tag(EXPORT_ARTIST, base64ToUint8Array(COVER_ART_BASE64));
-        downloadBlob(new Blob([id3Tag, out.buffer], { type: 'audio/mp3' }), 'mp3');
+        await downloadBlob(new Blob([id3Tag, out.buffer], { type: 'audio/mp3' }), 'mp3');
         exportProgress.value = 100;
       }
     } catch (err) {
@@ -2539,7 +2658,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       ]);
       const outData = await ffmpeg.readFile('output.m4a');
       exportProgress.value = 95;
-      downloadBlob(new Blob([outData.buffer], { type: 'audio/mp4' }), 'm4a');
+      await downloadBlob(new Blob([outData.buffer], { type: 'audio/mp4' }), 'm4a');
       exportProgress.value = 100;
     } catch (err) {
       alert('M4A export failed. Please try WAV or MP3 export instead.');
