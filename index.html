@@ -1446,25 +1446,34 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
         // club master cannot lose — let the transient through, then hold the
         // sustain. The release is timed to recover between beats rather than
         // pumping across them.
-        low:     { thresh: -26, ratio: 4.2, attack: 0.030, release: 0.16, makeup: 2.20 },
-        lowMid:  { thresh: -23, ratio: 3.4, attack: 0.010, release: 0.14, makeup: 0.94 },
-        highMid: { thresh: -20, ratio: 3.0, attack: 0.005, release: 0.11, makeup: 1.18 },
-        air:     { thresh: -23, ratio: 3.8, attack: 0.0015, release: 0.06, makeup: 1.28 },
+        low:     { thresh: -25, ratio: 3.0, attack: 0.032, release: 0.15, makeup: 1.80 },
+        // This band carries the kick's body. The first version pulled it DOWN,
+        // which left sub and air with a hole between them — the sound of hearing
+        // a track through a wall rather than being hit by it.
+        lowMid:  { thresh: -21, ratio: 2.6, attack: 0.014, release: 0.15, makeup: 1.34 },
+        highMid: { thresh: -20, ratio: 3.0, attack: 0.005, release: 0.11, makeup: 1.10 },
+        air:     { thresh: -23, ratio: 3.8, attack: 0.0015, release: 0.06, makeup: 1.02 },
       },
       eq: [
-        { freq: 48,    gain: 3.0,  type: 'lowshelf',  Q: 0.7 },
-        { freq: 300,   gain: -2.6, type: 'peaking',   Q: 0.9 },
-        { freq: 1500,  gain: 1.4,  type: 'peaking',   Q: 0.9 },
-        { freq: 4200,  gain: -1.6, type: 'peaking',   Q: 1.4 },
-        { freq: 10500, gain: 3.8,  type: 'highshelf', Q: 0.7 },
+        { freq: 42,    gain: -2.6, type: 'lowshelf',  Q: 0.7 },
+        // The thump. 60-150 Hz is where a kick stops being a rumble and starts
+        // being a hit, and it was the one region the first voicing left empty.
+        { freq: 110,   gain: 6.5,  type: 'peaking',   Q: 0.6 },
+        { freq: 380,   gain: -0.5, type: 'peaking',   Q: 1.0 },
+        { freq: 1500,  gain: 0.8,  type: 'peaking',   Q: 0.9 },
+        { freq: 4200,  gain: -2.0, type: 'peaking',   Q: 1.4 },
+        { freq: 11000, gain: 0.8,  type: 'highshelf', Q: 0.7 },
       ],
-      saturation: 0.58,
-      air: 0.50,
-      stereoWidth: 1.24,
+      saturation: 0.62,
+      air: 0.14,
+      // Deliberately the narrowest of the loud presets. Width spreads energy to
+      // the sides and away from the centre, and a kick that is not centred and
+      // dominant does not hit — it surrounds.
+      stereoWidth: 1.06,
       // Hardest mono low end of the set: a club rig folds the bottom to a single
       // sub anyway, and side energy down there just cancels itself.
       bassMono: 0.95,
-      sideAir: 2.4,
+      sideAir: 0.6,
       // Slow attack again on the glue, for the same reason as the low band.
       glue: { thresh: -16, ratio: 4.2, attack: 0.020, release: 0.11 },
     },
@@ -1609,11 +1618,17 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       taps: [], height: null,
     },
     immersive: {
-      label: 'enveloping', shuffleDb: 5.0,
+      label: 'enveloping', shuffleDb: 5.4,
       allpass: [180, 520, 1400, 3200, 6500, 12000],
-      widthMult: 1.38,
-      taps: [{ ms: 13, db: -7 }, { ms: 19, db: -10 }, { ms: 29, db: -13 }, { ms: 41, db: -16 }],
-      height: { notchHz: 8200, notchDb: -3.5, liftHz: 13000, liftDb: 4.5 },
+      widthMult: 1.40,
+      // Reflection timing decides whether this reads as size or as distance.
+      // Past roughly 10 ms the ear starts hearing a room somewhere behind the
+      // speakers; under it the same reflections fuse with the direct sound and
+      // are heard as width. The first version ran out to 41 ms, which put the
+      // track in the next room. These are short and quiet enough to widen
+      // without moving anything away.
+      taps: [{ ms: 6, db: -11 }, { ms: 9.5, db: -14 }, { ms: 14, db: -17 }],
+      height: { notchHz: 8200, notchDb: -3.0, liftHz: 13000, liftDb: 2.5 },
     },
   };
 
