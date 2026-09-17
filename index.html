@@ -156,6 +156,7 @@
   .ab-toggle button.active{background:#000000;color:#ffffff;}
 
   .lufs-target{display:none;}
+  .loudness-note{font-size:0.72rem;color:var(--sub);margin-left:auto;text-align:right;}
 
   .export-row{margin-top:20px;}
   progress{width:100%;height:8px;border-radius:4px;overflow:hidden;accent-color:#000000;}
@@ -239,6 +240,15 @@
       <label>Intensity</label>
       <input type="range" id="intensitySlider" min="0" max="100" value="65">
       <span class="intval" id="intensityVal">65%</span>
+    </div>
+
+    <div class="intensity-row">
+      <label>Loudness</label>
+      <div class="ab-toggle" id="loudnessToggle">
+        <button id="btnLoud" class="active">Loud</button>
+        <button id="btnStreaming">Streaming</button>
+      </div>
+      <span class="loudness-note" id="loudnessNote"></span>
     </div>
 
     <div class="lufs-target">Target loudness: <b id="targetLufs">−11 LUFS</b> (optimized for streaming)</div>
@@ -1032,6 +1042,9 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   const intensitySlider = document.getElementById('intensitySlider');
   const intensityVal = document.getElementById('intensityVal');
   const targetLufsEl = document.getElementById('targetLufs');
+  const btnLoud = document.getElementById('btnLoud');
+  const btnStreaming = document.getElementById('btnStreaming');
+  const loudnessNote = document.getElementById('loudnessNote');
 
   const playBtn = document.getElementById('playBtn');
   const btnOrig = document.getElementById('btnOrig');
@@ -1061,6 +1074,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   // The finished master, rendered once. Preview and export both play/encode THIS
   // buffer, so what you hear in the A/B is bit-for-bit what lands in the file.
   let masteredBuffer = null;
+  let loudnessMode = 'loud';  // 'loud' | 'streaming'
   let masteredBufferId = 0;  // ties the page's master to the worker's cached copy
   let masterAudioSeq = 0;
   let masterRun = null;      // in-flight mastering promise, if any
@@ -1290,7 +1304,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     document.querySelectorAll('.preset').forEach(el => {
       el.classList.toggle('active', el.dataset.id === id);
     });
-    targetLufsEl.textContent = `${currentPreset.targetLufs} LUFS`;
+    refreshTargetLabel();
     scheduleSpeculativeMaster();
   }
 
@@ -1321,8 +1335,46 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   }
 
   function selectionKey() {
-    return currentPreset ? currentPreset.id + '@' + currentIntensity : null;
+    return currentPreset ? currentPreset.id + '@' + currentIntensity + '@' + loudnessMode : null;
   }
+
+  // Every streaming service normalises playback loudness, so a master pushed to
+  // -9 LUFS is simply turned back down on the way to the listener — the dynamics
+  // spent getting there are gone and nothing was gained. Apple says this outright
+  // in the Digital Masters brief: "songs that have been mastered loud will be
+  // played back at a lower volume, which can make tracks actually sound weaker."
+  //
+  // Streaming mode therefore keeps the style's whole tonal signature and only
+  // stops chasing level: -14 LUFS, which is roughly where Spotify, YouTube and
+  // Apple's Sound Check land, and a -1.5 dBTP ceiling for real headroom through
+  // a lossy encoder. Loud mode is unchanged, for anything going somewhere that
+  // does not normalise.
+  const STREAMING_TARGET = { targetLufs: -14.0, ceilingDb: -1.5 };
+
+  function effectiveTarget(preset) {
+    if (loudnessMode === 'streaming') return STREAMING_TARGET;
+    return { targetLufs: preset.targetLufs, ceilingDb: preset.ceilingDb !== undefined ? preset.ceilingDb : -1 };
+  }
+
+  function setLoudnessMode(mode) {
+    if (loudnessMode === mode) return;
+    loudnessMode = mode;
+    btnLoud.classList.toggle('active', mode === 'loud');
+    btnStreaming.classList.toggle('active', mode === 'streaming');
+    invalidateMaster();
+    refreshTargetLabel();
+    scheduleSpeculativeMaster();
+  }
+
+  function refreshTargetLabel() {
+    if (!currentPreset) { loudnessNote.textContent = ''; return; }
+    const t = effectiveTarget(currentPreset);
+    targetLufsEl.textContent = `${t.targetLufs} LUFS`;
+    loudnessNote.textContent = `${t.targetLufs.toFixed(1)} LUFS · ${t.ceilingDb.toFixed(1)} dBTP`;
+  }
+
+  btnLoud.addEventListener('click', () => setLoudnessMode('loud'));
+  btnStreaming.addEventListener('click', () => setLoudnessMode('streaming'));
 
   intensitySlider.addEventListener('input', () => {
     currentIntensity = intensitySlider.value / 100;
@@ -1381,11 +1433,123 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     masteredBuffer = null;
     masterToken++;
     clearTimeout(speculativeTimer);
+    loudnessNote.textContent = '';
     setPlayMode('orig');
     filebar.classList.remove('show');
     showOnly(null);
     document.querySelectorAll('.preset').forEach(el => el.classList.remove('active'));
     fileInput.value = '';
+  }
+
+  // ---------- native sample rate ----------
+  // decodeAudioData always resamples to the sample rate of the context it is
+  // called on, and a realtime AudioContext runs at whatever the output device
+  // wants — usually 44.1 or 48 kHz. Decoding a 96 kHz master on it therefore
+  // threw away half the file before the chain ever saw it, silently.
+  //
+  // So the container is read first, and the file is decoded on an offline
+  // context created at its OWN rate. Nothing is upsampled: a 44.1 kHz file stays
+  // 44.1 kHz (which also avoids a pointless 44.1 -> 48 conversion on machines
+  // whose output device runs at 48). Playback resamples for monitoring; the
+  // exported file keeps the source rate.
+  const MIN_RATE = 8000, MAX_RATE = 192000;
+
+  function sniffSampleRate(buf) {
+    const b = new Uint8Array(buf);
+    const dv = new DataView(buf);
+    const tag = (o, n) => String.fromCharCode.apply(null, b.subarray(o, o + n));
+    if (b.length < 32) return 0;
+
+    // RIFF/WAVE (and RF64): the fmt chunk carries the rate outright.
+    if (tag(0, 4) === 'RIFF' || tag(0, 4) === 'RF64') {
+      let pos = 12;
+      while (pos + 8 <= b.length) {
+        const id = tag(pos, 4);
+        const size = dv.getUint32(pos + 4, true);
+        if (id === 'fmt ') return dv.getUint32(pos + 12, true);
+        pos += 8 + size + (size & 1);
+        if (size <= 0) break;
+      }
+      return 0;
+    }
+
+    // AIFF/AIFC: the COMM chunk stores the rate as an 80-bit IEEE extended float.
+    if (tag(0, 4) === 'FORM' && (tag(8, 4) === 'AIFF' || tag(8, 4) === 'AIFC')) {
+      let pos = 12;
+      while (pos + 8 <= b.length) {
+        const id = tag(pos, 4);
+        const size = dv.getUint32(pos + 4, false);
+        if (id === 'COMM') {
+          const o = pos + 8 + 8;
+          const expo = ((b[o] & 0x7F) << 8 | b[o + 1]) - 16383;
+          let mant = 0;
+          for (let i = 0; i < 8; i++) mant = mant * 256 + b[o + 2 + i];
+          return Math.round(mant * Math.pow(2, expo - 63));
+        }
+        pos += 8 + size + (size & 1);
+        if (size <= 0) break;
+      }
+      return 0;
+    }
+
+    // FLAC: STREAMINFO puts the rate in 20 bits starting 18 bytes into the block.
+    if (tag(0, 4) === 'fLaC' && b.length > 30) {
+      return (b[18] << 12) | (b[19] << 4) | (b[20] >> 4);
+    }
+
+    // Ogg: Opus always decodes at 48 kHz; Vorbis states its rate in the header.
+    if (tag(0, 4) === 'OggS') {
+      for (let i = 28; i < Math.min(b.length - 16, 8192); i++) {
+        if (tag(i, 8) === 'OpusHead') return 48000;
+        if (b[i] === 1 && tag(i + 1, 6) === 'vorbis') return dv.getUint32(i + 12, true);
+      }
+      return 0;
+    }
+
+    // MP4/M4A: prefer an explicit `srat` box, which is the only place a rate
+    // above 65535 can live; otherwise take it from the mp4a sample entry, where
+    // it sits as a 16.16 fixed-point value.
+    if (tag(4, 4) === 'ftyp') {
+      const limit = Math.min(b.length - 32, 1 << 20);
+      for (let i = 0; i < limit; i++) if (tag(i, 4) === 'srat') return dv.getUint32(i + 4);
+      for (let i = 0; i < limit; i++) if (tag(i, 4) === 'mp4a') return dv.getUint32(i + 28) >>> 16;
+      return 0;
+    }
+
+    // MPEG audio: skip any ID3v2 tag, then read the first frame header.
+    let off = 0;
+    if (tag(0, 3) === 'ID3') {
+      off = 10 + ((b[6] & 0x7F) << 21 | (b[7] & 0x7F) << 14 | (b[8] & 0x7F) << 7 | (b[9] & 0x7F));
+    }
+    for (let i = off; i < Math.min(b.length - 4, off + (1 << 18)); i++) {
+      if (b[i] !== 0xFF || (b[i + 1] & 0xE0) !== 0xE0) continue;
+      const verBits = (b[i + 1] >> 3) & 0x03;   // 3 = MPEG1, 2 = MPEG2, 0 = MPEG2.5
+      const rateIdx = (b[i + 2] >> 2) & 0x03;
+      const bitrateIdx = b[i + 2] >> 4;
+      // Skip anything that is not a real frame header: reserved version,
+      // reserved rate, or a free/invalid bitrate index. Guards against ID3
+      // payload and album art happening to contain a sync word.
+      if (verBits === 1 || rateIdx === 3 || bitrateIdx === 0 || bitrateIdx === 0x0F) continue;
+      const base = [44100, 48000, 32000][rateIdx];
+      return verBits === 3 ? base : (verBits === 2 ? base / 2 : base / 4);
+    }
+    return 0;
+  }
+
+  async function decodeAtNativeRate(arrayBuf) {
+    let rate = 0;
+    try { rate = sniffSampleRate(arrayBuf); } catch (err) { rate = 0; }
+    if (rate >= MIN_RATE && rate <= MAX_RATE && rate !== audioCtx.sampleRate) {
+      try {
+        // A one-frame offline context is enough; decodeAudioData only borrows
+        // its sample rate.
+        const probe = new OfflineAudioContext(1, 1, rate);
+        return await probe.decodeAudioData(arrayBuf.slice(0));
+      } catch (err) {
+        // Unsupported rate or a container we mis-read — fall through.
+      }
+    }
+    return audioCtx.decodeAudioData(arrayBuf);
   }
 
   async function loadFile(file) {
@@ -1397,7 +1561,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
 
     const arrayBuf = await file.arrayBuffer();
     try {
-      originalBuffer = await audioCtx.decodeAudioData(arrayBuf);
+      originalBuffer = await decodeAtNativeRate(arrayBuf);
     } catch (err) {
       alert('Could not decode this file. Please use WAV, MP3, FLAC, or AIFF.');
       return;
@@ -1882,7 +2046,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     const preset = currentPreset;
     const intensity = currentIntensity;
     const sr = originalBuffer.sampleRate;
-    const ceilingDb = preset.ceilingDb !== undefined ? preset.ceilingDb : -1;
+    const { targetLufs, ceilingDb } = effectiveTarget(preset);
 
     report('Mastering …');
     let rendered;
@@ -1905,7 +2069,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
         channels,
         id: audioId,
         sampleRate: sr,
-        targetLufs: preset.targetLufs,
+        targetLufs,
         // Small guard under the declared ceiling. 4x oversampling is what
         // BS.1770-4 itself specifies and it still reads a touch low against a 32x
         // reference (measured: within 0.08 dB with these kernels), and the
@@ -2150,7 +2314,55 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     }
   }
 
-  async function encodeWavBlob(bitDepth) {
+  // Keeping the source rate means the master can now be at 88.2, 96 or 192 kHz —
+  // rates MP3 cannot represent at all (it tops out at 48 kHz) and AAC only
+  // supports up to 96. Those exports get a sample rate conversion first, the same
+  // order of operations Apple uses at ingest: convert, then encode. WAV is
+  // untouched and always carries the native rate.
+  const MP3_RATES = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000];
+
+  function legalRate(sr, allowed) {
+    if (allowed.indexOf(sr) !== -1) return sr;
+    // Stay in the source's own family where possible, so the conversion is a
+    // clean integer ratio (96 -> 48, 88.2 -> 44.1) rather than an awkward one.
+    // The HIGHEST such divisor, not the first one found: 96 kHz divides evenly
+    // by 8 kHz too, and picking that would hand back a telephone-grade file.
+    let best = 0;
+    for (const r of allowed) if (r < sr && sr % r === 0 && r > best) best = r;
+    if (best) return best;
+    // No clean ratio: the highest legal rate at or below the source.
+    for (const r of allowed) if (r <= sr && r > best) best = r;
+    return best || allowed[0];
+  }
+
+  function resampleBuffer(buffer, targetRate) {
+    if (buffer.sampleRate === targetRate) return Promise.resolve(buffer);
+    const ctx = new OfflineAudioContext(
+      buffer.numberOfChannels,
+      Math.max(1, Math.ceil(buffer.duration * targetRate)),
+      targetRate
+    );
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    src.start(0);
+    return ctx.startRendering();
+  }
+
+  const AAC_RATES = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000];
+
+  async function encodeWavBlob(bitDepth, targetRate) {
+    const buffer = masteredBuffer;
+    if (targetRate && targetRate !== buffer.sampleRate) {
+      const converted = await resampleBuffer(buffer, targetRate);
+      const channels = copyChannels(converted);
+      const out = await dsp.call(
+        'encodeWav',
+        { channels, sampleRate: targetRate, bitDepth },
+        transferListOf(channels)
+      );
+      return new Blob([out.buffer], { type: 'audio/wav' });
+    }
     const out = await encodeFromMaster('encodeWav', { bitDepth });
     return new Blob([out.buffer], { type: 'audio/wav' });
   }
@@ -2204,7 +2416,19 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       const buffer = await masterForExport();
       if (buffer) {
         exportProgress.value = 45;
-        const out = await encodeFromMaster('encodeMp3', { kbps: 192 });
+        const rate = legalRate(buffer.sampleRate, MP3_RATES);
+        let out;
+        if (rate === buffer.sampleRate) {
+          out = await encodeFromMaster('encodeMp3', { kbps: 192 });
+        } else {
+          const converted = await resampleBuffer(buffer, rate);
+          const channels = copyChannels(converted);
+          out = await dsp.call(
+            'encodeMp3',
+            { channels, sampleRate: rate, kbps: 192 },
+            transferListOf(channels)
+          );
+        }
         exportProgress.value = 95;
         const id3Tag = buildId3v2Tag(EXPORT_ARTIST, base64ToUint8Array(COVER_ART_BASE64));
         downloadBlob(new Blob([id3Tag, out.buffer], { type: 'audio/mp3' }), 'mp3');
@@ -2239,7 +2463,8 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
 
       const buffer = await bufferPromise;
       if (!buffer) throw new Error('no master');
-      const wavBlob = await encodeWavBlob(24);
+      // AAC's sampling frequency table stops at 96 kHz.
+      const wavBlob = await encodeWavBlob(24, legalRate(buffer.sampleRate, AAC_RATES));
       const wavData = new Uint8Array(await wavBlob.arrayBuffer());
 
       await ffmpeg.writeFile('input.wav', wavData);
