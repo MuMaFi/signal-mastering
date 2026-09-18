@@ -156,6 +156,44 @@
 
   .lufs-target{display:none;}
 
+  .action-row{margin-top:20px;display:flex;gap:10px;flex-wrap:wrap;}
+
+  /* ---------- Experimental ---------- */
+  .lab-intro{font-size:0.78rem;color:var(--sub);line-height:1.5;margin:0 0 16px;max-width:60ch;}
+  .lab-transport{
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    padding-bottom:16px;margin-bottom:4px;border-bottom:1px solid var(--line);
+    position:sticky;top:0;background:#ffffff;z-index:2;padding-top:4px;
+  }
+  .lab-status{font-size:0.72rem;color:var(--sub);margin-left:auto;white-space:nowrap;}
+  .lab-status.busy{opacity:0.55;}
+
+  .lab-group{margin-top:20px;}
+  .lab-group > h3{
+    font-size:0.68rem;text-transform:uppercase;letter-spacing:0.09em;font-weight:600;
+    color:var(--text);margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid #e4e4e4;
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    cursor:pointer;-webkit-user-select:none;user-select:none;
+  }
+  .lab-group > h3::after{content:'–';color:var(--sub);font-size:0.85rem;line-height:1;}
+  .lab-group.collapsed > h3{margin-bottom:0;}
+  .lab-group.collapsed > h3::after{content:'+';}
+  .lab-group.collapsed .lab-row{display:none;}
+  .lab-row{display:grid;grid-template-columns:minmax(88px,120px) 1fr minmax(64px,72px);
+    align-items:center;gap:12px;padding:3px 0;}
+  .lab-row label{font-size:0.75rem;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .lab-row .lab-val{font-size:0.75rem;color:var(--text);text-align:right;font-variant-numeric:tabular-nums;}
+  .lab-row input[type=range]{width:100%;}
+  .lab-row.changed label{color:var(--text);font-weight:600;}
+  .lab-row.changed .lab-val::after{content:' •';}
+
+  @media (max-width:560px){
+    .lab-row{grid-template-columns:minmax(74px,96px) 1fr 58px;gap:8px;}
+    .lab-row label{font-size:0.72rem;}
+    .lab-transport{gap:8px;}
+    .lab-status{width:100%;margin-left:0;text-align:left;}
+  }
+
   /* Three buttons plus a label and a readout do not fit on a phone in one line,
      so this row wraps and the readout drops underneath instead of squeezing the
      toggle until the first button is clipped off. */
@@ -337,7 +375,37 @@
 
     <div class="lufs-target">Target loudness: <b id="targetLufs">−11 LUFS</b> (optimized for streaming)</div>
 
-    <button class="btn" id="confirmPresetBtn" style="margin-top:20px;">Master →</button>
+    <div class="action-row">
+      <button class="btn" id="confirmPresetBtn">Master →</button>
+      <button class="btn secondary" id="openLabBtn">Experimental</button>
+    </div>
+  </section>
+
+  <section id="labSection">
+    <h2>Experimental</h2>
+    <p class="lab-intro">
+      Every number the selected style is built from, live. A short loop taken from
+      the busiest part of the track re-masters on each change, so one move is one
+      listen.
+    </p>
+
+    <div class="lab-transport">
+      <button class="btn" id="labPlayBtn">▶ Loop</button>
+      <div class="ab-toggle">
+        <button id="labOrig">Original</button>
+        <button id="labMastered" class="active">Mastered</button>
+      </div>
+      <span class="lab-status" id="labStatus"></span>
+    </div>
+
+    <div class="lab-params" id="labParams"></div>
+
+    <div class="action-row">
+      <button class="btn" id="labMasterBtn">Master full track →</button>
+      <button class="btn secondary" id="labResetBtn">Reset to style</button>
+      <button class="btn secondary" id="labCopyBtn">Copy settings</button>
+      <button class="btn secondary" id="labBackBtn">← Back</button>
+    </div>
   </section>
 
   <section id="resultSection">
@@ -1023,7 +1091,10 @@ function createSignalDsp() {
     // the cache to one specific master, so a run that was superseded can never
     // be exported by mistake.
     const out = chans.map(c => c.slice());
-    lastMaster = { id: args.id, channels: chans, sampleRate: sr };
+    // A preview render (the Experimental loop) asks not to be cached: it is a few
+    // seconds of audio that nobody exports, and letting it take the slot would
+    // force the next export to ship the whole master back across the thread.
+    if (args.cache !== false) lastMaster = { id: args.id, channels: chans, sampleRate: sr };
     return { result: { channels: out }, transfer: out.map(c => c.buffer) };
   }
 
@@ -1235,6 +1306,17 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   const exportM4aBtn = document.getElementById('exportM4aBtn');
   const exportProgress = document.getElementById('exportProgress');
   const backToPresetBtn = document.getElementById('backToPresetBtn');
+  const labSection = document.getElementById('labSection');
+  const openLabBtn = document.getElementById('openLabBtn');
+  const labParams = document.getElementById('labParams');
+  const labPlayBtn = document.getElementById('labPlayBtn');
+  const labOrig = document.getElementById('labOrig');
+  const labMastered = document.getElementById('labMastered');
+  const labStatus = document.getElementById('labStatus');
+  const labMasterBtn = document.getElementById('labMasterBtn');
+  const labResetBtn = document.getElementById('labResetBtn');
+  const labCopyBtn = document.getElementById('labCopyBtn');
+  const labBackBtn = document.getElementById('labBackBtn');
 
   let audioCtx = null;
   let originalBuffer = null;
@@ -1743,7 +1825,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   clearBtn.addEventListener('click', resetAll);
 
   function showOnly(sectionEl) {
-    [presetSection, loadingSection, resultSection].forEach(s => s.classList.remove('show'));
+    [presetSection, loadingSection, resultSection, labSection].forEach(s => s.classList.remove('show'));
     if (sectionEl) sectionEl.classList.add('show');
   }
 
@@ -1759,6 +1841,12 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     masteredBuffer = null;
     masterToken++;
     clearTimeout(speculativeTimer);
+    labSilence();
+    labPreset = null;
+    labExcerpt = null;
+    labDry = null;
+    labExcerptSource = null;
+    labMastered_ = null;
     loudnessNote.textContent = '';
     spaceNote.textContent = '';
     setPlayMode('orig');
@@ -2688,6 +2776,511 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     }
     return false;
   };
+
+  // ================================================================
+  //  EXPERIMENTAL
+  // ================================================================
+  // A workbench on the numbers a style is made of. The point is the loop: a
+  // change is worth nothing if you cannot hear it immediately, so this masters a
+  // short excerpt rather than the track — the same chain, the same metering, the
+  // same limiter, just a few seconds of audio — and swaps the result under a
+  // seamless loop without losing the playback position.
+
+  const LAB_EXCERPT_SEC = 8;
+  const LAB_XFADE_SEC = 0.06;   // loop seam crossfade
+  const LAB_DEBOUNCE_MS = 180;
+
+  let labPreset = null;         // the working copy being edited
+  let labBase = null;           // the style it started from, for the change marks
+  let labExcerpt = null;        // the untouched excerpt, pre-seal
+  let labDry = null;            // the same excerpt, sealed for looping
+  let labExcerptSource = null;  // which decoded file the excerpt was cut from
+  let labMastered_ = null;      // the mastered excerpt currently looping
+  let labGraph = null;
+  let labMode = 'mastered';
+  let labPlaying = false;
+  let labTimer = null;
+  let labRunning = false;
+  let labPending = false;
+  let labSeq = 0;
+  let labAutoStart = false;     // start the loop once the first preview is ready
+  let labRows = [];             // one entry per slider on screen
+  let labCustomRev = 0;         // makes each edited style its own cache key
+
+  // Where in the track is most representative? Not the middle — that can be a
+  // breakdown. The busiest stretch is what you want to judge a master on.
+  function busiestWindow(buffer, seconds) {
+    const sr = buffer.sampleRate;
+    const need = Math.min(Math.round(seconds * sr), buffer.length);
+    if (need >= buffer.length) return 0;
+    const ch = buffer.getChannelData(0);
+    const step = Math.round(sr * 0.25);
+    const win = Math.round(need / step);
+    const blocks = Math.floor(ch.length / step);
+    const energy = new Float64Array(blocks);
+    for (let b = 0; b < blocks; b++) {
+      let sum = 0;
+      const o = b * step;
+      for (let i = o; i < o + step; i++) sum += ch[i] * ch[i];
+      energy[b] = sum;
+    }
+    let best = 0, bestSum = -1, running = 0;
+    for (let b = 0; b < blocks; b++) {
+      running += energy[b];
+      if (b >= win) running -= energy[b - win];
+      if (b >= win - 1 && running > bestSum) { bestSum = running; best = b - win + 1; }
+    }
+    return Math.min(best * step, buffer.length - need);
+  }
+
+  function makeExcerpt(buffer, startFrame, frames) {
+    const out = audioCtx.createBuffer(buffer.numberOfChannels, frames, buffer.sampleRate);
+    const tmp = new Float32Array(frames);
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      buffer.copyFromChannel(tmp, c, startFrame);
+      out.copyToChannel(tmp, c);
+    }
+    return out;
+  }
+
+  // Folds the tail back over the head so the loop seam is inaudible: the render
+  // is a crossfade longer than the loop, and the overlap is blended in.
+  function sealLoop(buffer, xfadeFrames) {
+    const frames = buffer.length - xfadeFrames;
+    if (frames <= xfadeFrames) return buffer;
+    const out = audioCtx.createBuffer(buffer.numberOfChannels, frames, buffer.sampleRate);
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      const src = buffer.getChannelData(c);
+      const dst = out.getChannelData(c);
+      dst.set(src.subarray(0, frames));
+      for (let i = 0; i < xfadeFrames; i++) {
+        const t = i / xfadeFrames;
+        dst[i] = src[i] * t + src[frames + i] * (1 - t);
+      }
+    }
+    return out;
+  }
+
+  function labSetStatus(text, busy) {
+    labStatus.textContent = text;
+    labStatus.classList.toggle('busy', !!busy);
+  }
+
+  async function labRender() {
+    if (labRunning) { labPending = true; return; }
+    labRunning = true;
+    const token = ++labSeq;
+    labSetStatus('re-mastering …', true);
+
+    const sr = originalBuffer.sampleRate;
+    const xfade = Math.round(LAB_XFADE_SEC * sr);
+    const frames = labExcerpt.length;
+    const started = Date.now();
+
+    try {
+      const offline = new OfflineAudioContext(labExcerpt.numberOfChannels, frames, sr);
+      const src = offline.createBufferSource();
+      src.buffer = labExcerpt;
+      buildProcessingChain(offline, src, labPreset, currentIntensity, offline.destination);
+      src.start(0);
+      const rendered = await offline.startRendering();
+      if (token !== labSeq) return;
+
+      const channels = copyChannels(rendered);
+      const t = effectiveTarget(labPreset);
+      const out = await dsp.call('finalize', {
+        channels,
+        id: -1,                 // negative id: never becomes the export cache
+        cache: false,
+        sampleRate: sr,
+        targetLufs: t.targetLufs,
+        matchLoudness: t.matchLoudness,
+        ceiling: Math.pow(10, (t.ceilingDb - 0.5) / 20),
+        renderHeadroom: RENDER_HEADROOM,
+      }, transferListOf(channels));
+      if (token !== labSeq) return;
+
+      for (let c = 0; c < out.channels.length; c++) rendered.copyToChannel(out.channels[c], c);
+      labMastered_ = sealLoop(rendered, xfade);
+      labSetStatus(`${Date.now() - started} ms`, false);
+      // Swapping the buffer under a running loop keeps the position, so a change
+      // is heard at the point of the excerpt you were already listening to.
+      if (labPlaying) labStartLoop(labLoopOffset());
+      else if (labAutoStart) { labAutoStart = false; labStartLoop(0); }
+    } catch (err) {
+      labSetStatus('render failed', false);
+    } finally {
+      labRunning = false;
+      if (labPending) { labPending = false; labRender(); }
+    }
+  }
+
+  function labScheduleRender() {
+    clearTimeout(labTimer);
+    labTimer = setTimeout(labRender, LAB_DEBOUNCE_MS);
+  }
+
+  function labLoopOffset() {
+    if (!labGraph || !labMastered_) return 0;
+    const played = audioCtx.currentTime - labGraph.startedAt;
+    return played > 0 ? played % labMastered_.duration : 0;
+  }
+
+  function labStopLoop(immediate) {
+    if (labGraph) {
+      const g = labGraph;
+      labGraph = null;
+      const t = audioCtx.currentTime;
+      const fade = immediate ? 0.004 : FADE;
+      for (const node of g.gains) rampGain(node.gain, 0, t, fade);
+      for (const s of g.sources) { s.onended = null; try { s.stop(t + fade + 0.01); } catch (e) {} }
+      setTimeout(() => {
+        for (const s of g.sources) { try { s.disconnect(); } catch (e) {} }
+        for (const n of g.gains) { try { n.disconnect(); } catch (e) {} }
+      }, (fade + 0.2) * 1000);
+    }
+  }
+
+  function labVoice(buffer, startAt, offset, gainTo) {
+    const src = audioCtx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0;
+    src.connect(gain);
+    gain.connect(audioCtx.destination);
+    src.start(startAt, offset % buffer.duration);
+    gain.gain.setValueAtTime(0, startAt);
+    gain.gain.linearRampToValueAtTime(gainTo, startAt + FADE);
+    return { src, gain };
+  }
+
+  // Both versions loop in sync behind their own gains, exactly like the main A/B,
+  // so switching between them — or swapping in a freshly rendered master — never
+  // interrupts playback.
+  function labStartLoop(offset) {
+    labStopLoop(true);
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const startAt = audioCtx.currentTime + 0.03;
+    const onMaster = labMode === 'mastered' && labMastered_;
+
+    const a = labVoice(labDry, startAt, offset, onMaster ? 0 : 1);
+    const graph = { sources: [a.src], gains: [a.gain], orig: a, master: null, startedAt: startAt - offset };
+    if (labMastered_) {
+      const b = labVoice(labMastered_, startAt, offset, onMaster ? 1 : 0);
+      graph.master = b;
+      graph.sources.push(b.src);
+      graph.gains.push(b.gain);
+    }
+    labGraph = graph;
+    labPlaying = true;
+    labPlayBtn.innerHTML = '<span class="stop-icon"></span> Loop';
+  }
+
+  // The choice is remembered even while no master exists yet, so the first
+  // preview simply arrives on the side that is already selected.
+  function labSetMode(mode) {
+    labMode = mode;
+    labMastered.classList.toggle('active', mode === 'mastered');
+    labOrig.classList.toggle('active', mode !== 'mastered');
+    if (!labGraph) return;
+    const onMaster = mode === 'mastered' && !!labGraph.master;
+    const t = audioCtx.currentTime;
+    if (labGraph.orig) rampGain(labGraph.orig.gain.gain, onMaster ? 0 : 1, t, XFADE);
+    if (labGraph.master) rampGain(labGraph.master.gain.gain, onMaster ? 1 : 0, t, XFADE);
+  }
+
+  function labSilence() {
+    labStopLoop();
+    labPlaying = false;
+    labAutoStart = false;
+    labPlayBtn.textContent = '▶ Loop';
+  }
+
+  labPlayBtn.addEventListener('click', () => {
+    if (labPlaying) labSilence();
+    else labStartLoop(0);
+  });
+  labOrig.addEventListener('click', () => labSetMode('orig'));
+  labMastered.addEventListener('click', () => labSetMode('mastered'));
+
+  // ---------- the controls ----------
+  // A style is nothing but a table of numbers, so this screen is generated from
+  // that table rather than written out by hand: every field the chain reads has a
+  // row here, and a field added to a preset appears without this code changing.
+  //
+  // The band crossovers (110 / 900 / 5200 Hz) are deliberately absent — they are
+  // fixed properties of the filter tree, not of a style, and moving them would
+  // invalidate the all-pass compensation that keeps the bands summing flat.
+
+  const LAB_LOG_STEPS = 600;   // slider resolution for the logarithmic frequencies
+
+  const fmtDb   = v => `${v > 0 ? '+' : ''}${v.toFixed(1)} dB`;
+  const fmtMs   = v => `${v < 0.01 ? (v * 1000).toFixed(1) : Math.round(v * 1000)} ms`;
+  const fmtX    = v => `×${v.toFixed(2)}`;
+  const fmtRat  = v => `${v.toFixed(1)}:1`;
+  const fmtAmt  = v => v.toFixed(2);
+  const fmtLufs = v => `${v.toFixed(1)} LU`;
+  const fmtHz   = v => v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 1 : 2)} kHz` : `${Math.round(v)} Hz`;
+
+  // The four band compressors and the glue bus take the same parameters, so they
+  // share one row definition; only the glue has no makeup stage.
+  function labCompParams(pick, withMakeup) {
+    const rows = [
+      { label: 'Threshold', min: -45,    max: -3,  step: 0.5,    fmt: fmtDb,
+        get: p => pick(p).thresh,  set: (p, v) => { pick(p).thresh = v; } },
+      { label: 'Ratio',     min: 1,      max: 10,  step: 0.1,    fmt: fmtRat,
+        get: p => pick(p).ratio,   set: (p, v) => { pick(p).ratio = v; } },
+      { label: 'Attack',    min: 0.0005, max: 0.1, step: 0.0005, fmt: fmtMs,
+        get: p => pick(p).attack,  set: (p, v) => { pick(p).attack = v; } },
+      { label: 'Release',   min: 0.02,   max: 0.8, step: 0.01,   fmt: fmtMs,
+        get: p => pick(p).release, set: (p, v) => { pick(p).release = v; } },
+    ];
+    if (withMakeup) rows.push(
+      { label: 'Makeup',    min: 0.3,    max: 3,   step: 0.01,   fmt: fmtX,
+        get: p => pick(p).makeup,  set: (p, v) => { pick(p).makeup = v; } });
+    return rows;
+  }
+
+  const LAB_EQ_KIND = { lowshelf: 'LS', highshelf: 'HS', peaking: 'PK', notch: 'NO' };
+
+  function labEqParams(i, type) {
+    const tag = `${i + 1} ${LAB_EQ_KIND[type] || 'PK'}`;
+    return [
+      { label: `${tag} · Freq`, min: 20, max: 18000, step: 1, log: true, fmt: fmtHz,
+        get: p => p.eq[i].freq, set: (p, v) => { p.eq[i].freq = v; } },
+      { label: `${tag} · Gain`, min: -12, max: 12, step: 0.1, fmt: fmtDb,
+        get: p => p.eq[i].gain, set: (p, v) => { p.eq[i].gain = v; } },
+      { label: `${tag} · Q`,    min: 0.2, max: 6,  step: 0.05, fmt: fmtAmt,
+        get: p => p.eq[i].Q,    set: (p, v) => { p.eq[i].Q = v; } },
+    ];
+  }
+
+  function labSchema(preset) {
+    let eq = [];
+    preset.eq.forEach((band, i) => { eq = eq.concat(labEqParams(i, band.type)); });
+    return [
+      { title: 'Low · below 110 Hz',     params: labCompParams(p => p.bands.low, true) },
+      { title: 'Low mid · 110–900 Hz',   params: labCompParams(p => p.bands.lowMid, true) },
+      { title: 'High mid · 900–5200 Hz', params: labCompParams(p => p.bands.highMid, true) },
+      { title: 'Air · above 5200 Hz',    params: labCompParams(p => p.bands.air, true) },
+      { title: 'Character EQ', params: eq },
+      { title: 'Colour', params: [
+        { label: 'Saturation', min: 0, max: 1,   step: 0.01, fmt: fmtAmt,
+          get: p => p.saturation, set: (p, v) => { p.saturation = v; } },
+        { label: 'Exciter',    min: 0, max: 1.5, step: 0.01, fmt: fmtAmt,
+          get: p => p.air,        set: (p, v) => { p.air = v; } },
+      ] },
+      { title: 'Stereo', params: [
+        { label: 'Width',     min: 0.5, max: 2, step: 0.01, fmt: fmtX,
+          get: p => p.stereoWidth, set: (p, v) => { p.stereoWidth = v; } },
+        { label: 'Bass mono', min: 0,   max: 1, step: 0.01, fmt: fmtAmt,
+          get: p => p.bassMono,    set: (p, v) => { p.bassMono = v; } },
+        { label: 'Side air',  min: 0,   max: 4, step: 0.05, fmt: fmtDb,
+          get: p => p.sideAir,     set: (p, v) => { p.sideAir = v; } },
+      ] },
+      { title: 'Glue bus', params: labCompParams(p => p.glue, false) },
+      // Both of these belong to the style, but only the Loud setting reads them —
+      // Streaming and Off carry their own target and ceiling.
+      { title: 'Output · Loud only', params: [
+        { label: 'Target',  min: -20, max: -5,   step: 0.1, fmt: fmtLufs,
+          get: p => p.targetLufs, set: (p, v) => { p.targetLufs = v; } },
+        { label: 'Ceiling', min: -3,  max: -0.1, step: 0.1, fmt: fmtDb,
+          get: p => (p.ceilingDb === undefined ? -1 : p.ceilingDb),
+          set: (p, v) => { p.ceilingDb = v; } },
+      ] },
+    ];
+  }
+
+  // Frequencies get a logarithmic slider: on a linear one the whole musical low
+  // end lives in the first 3% of the travel and is unadjustable by hand.
+  function labReadSlider(param, raw) {
+    const pos = parseFloat(raw);
+    if (!param.log) return Math.round(pos * 1e6) / 1e6;
+    return Math.round(param.min * Math.pow(param.max / param.min, pos / LAB_LOG_STEPS));
+  }
+
+  function labWriteSlider(param, value) {
+    if (!param.log) return value;
+    const v = clamp(value, param.min, param.max);
+    return Math.round(LAB_LOG_STEPS * Math.log(v / param.min) / Math.log(param.max / param.min));
+  }
+
+  function labSyncRow(entry, moveSlider) {
+    const v = entry.param.get(labPreset);
+    entry.val.textContent = entry.param.fmt(v);
+    const base = entry.param.get(labBase);
+    entry.row.classList.toggle('changed', Math.abs(v - base) > 1e-9);
+    if (moveSlider) entry.input.value = labWriteSlider(entry.param, v);
+  }
+
+  function labSyncRows() {
+    for (const entry of labRows) labSyncRow(entry, true);
+  }
+
+  function labBuildParams() {
+    labParams.innerHTML = '';
+    labRows = [];
+    for (const group of labSchema(labPreset)) {
+      const wrap = document.createElement('div');
+      wrap.className = 'lab-group';
+      const head = document.createElement('h3');
+      head.textContent = group.title;
+      head.addEventListener('click', () => wrap.classList.toggle('collapsed'));
+      wrap.appendChild(head);
+
+      for (const param of group.params) {
+        const row = document.createElement('div');
+        row.className = 'lab-row';
+        const label = document.createElement('label');
+        label.textContent = param.label;
+        const input = document.createElement('input');
+        input.type = 'range';
+        input.min = param.log ? 0 : param.min;
+        input.max = param.log ? LAB_LOG_STEPS : param.max;
+        input.step = param.log ? 1 : param.step;
+        const val = document.createElement('span');
+        val.className = 'lab-val';
+        row.appendChild(label);
+        row.appendChild(input);
+        row.appendChild(val);
+        wrap.appendChild(row);
+
+        const entry = { param, row, input, val };
+        labRows.push(entry);
+        // The readout follows the finger immediately; the re-master is debounced,
+        // so dragging a slider across its range costs one render, not a hundred.
+        input.addEventListener('input', () => {
+          param.set(labPreset, labReadSlider(param, input.value));
+          labSyncRow(entry, false);
+          labScheduleRender();
+        });
+      }
+      labParams.appendChild(wrap);
+    }
+    labSyncRows();
+  }
+
+  // ---------- opening, leaving, and taking the result with you ----------
+
+  function labClone(preset) {
+    const copy = JSON.parse(JSON.stringify(preset));
+    copy.baseId = preset.baseId || preset.id;
+    return copy;
+  }
+
+  function basePresetOf(preset) {
+    if (!preset) return null;
+    return PRESETS.find(p => p.id === (preset.baseId || preset.id)) || null;
+  }
+
+  // Cutting the excerpt costs one pass over the file, so it is done once per
+  // loaded track rather than per render.
+  function labEnsureExcerpt() {
+    if (labExcerpt && labExcerptSource === originalBuffer) return;
+    const sr = originalBuffer.sampleRate;
+    const xfade = Math.round(LAB_XFADE_SEC * sr);
+    const want = Math.min(Math.round(LAB_EXCERPT_SEC * sr) + xfade, originalBuffer.length);
+    const start = busiestWindow(originalBuffer, want / sr);
+    labExcerpt = makeExcerpt(originalBuffer, start, want);
+    labDry = sealLoop(labExcerpt, xfade);
+    labExcerptSource = originalBuffer;
+    labMastered_ = null;
+  }
+
+  openLabBtn.addEventListener('click', () => {
+    if (!originalBuffer || !currentPreset) return;
+    labBase = basePresetOf(currentPreset) || PRESETS[0];
+    // Edits survive a trip back to the style screen, but only while the style
+    // they were made on is still the selected one.
+    if (!labPreset || labPreset.baseId !== labBase.id) labPreset = labClone(labBase);
+    labEnsureExcerpt();
+    labBuildParams();
+    stopPlayback(true);
+    // A background master of the unedited style is pure competition in here: it
+    // is 20+ seconds of audio being rendered on the same core that owes the loop
+    // its next version, and an edit throws its result away anyway.
+    clearTimeout(speculativeTimer);
+    showOnly(labSection);
+    labSetMode(labMode);
+    labAutoStart = true;
+    labRender();
+  });
+
+  labBackBtn.addEventListener('click', () => {
+    labSilence();
+    showOnly(presetSection);
+    scheduleSpeculativeMaster();
+  });
+
+  labResetBtn.addEventListener('click', () => {
+    labPreset = labClone(labBase);
+    labSyncRows();
+    labScheduleRender();
+  });
+
+  labCopyBtn.addEventListener('click', async () => {
+    const out = labClone(labPreset);
+    delete out.baseId;
+    const text = JSON.stringify(out, null, 2);
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch (err) {
+      // No clipboard permission (or no clipboard API at all, which is the case
+      // inside the Android WebView) — the old selection trick still works there.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+    labSetStatus(ok ? 'settings copied' : 'copy blocked', false);
+  });
+
+  function labEdited() {
+    return labRows.some(e => Math.abs(e.param.get(labPreset) - e.param.get(labBase)) > 1e-9);
+  }
+
+  labMasterBtn.addEventListener('click', async () => {
+    if (!labPreset || !originalBuffer) return;
+    labSilence();
+
+    let next;
+    if (labEdited()) {
+      // A snapshot, not the live object: the working copy keeps being edited
+      // after this, and a master must never drift away from the settings it was
+      // made with. The fresh id also gives it its own cache key.
+      next = labClone(labPreset);
+      next.id = next.baseId + '*' + (++labCustomRev);
+      next.name = labBase.name + '-Custom';
+    } else {
+      // Nothing was actually changed, so this is the plain style — which means a
+      // master of it may already exist, and re-rendering it would be theatre.
+      next = labBase;
+    }
+    if (!currentPreset || currentPreset.id !== next.id) {
+      currentPreset = next;
+      invalidateMaster();
+    }
+    document.querySelectorAll('.preset').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === labBase.id);
+    });
+    refreshTargetLabel();
+
+    showOnly(loadingSection);
+    loadingText.textContent = 'Mastering …';
+    const started = Date.now();
+    const ok = await ensureMaster(msg => { loadingText.textContent = msg; });
+    if (!ok || !masteredBuffer) return;
+    const elapsed = Date.now() - started;
+    if (elapsed < 320) await wait(320 - elapsed);
+    showOnly(resultSection);
+  });
 
   // ================================================================
   //  EXPORT
