@@ -1737,9 +1737,11 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   // Detached copies of a buffer's channels, ready to hand to the worker. The
   // copy is unavoidable (an AudioBuffer's storage cannot be transferred out from
   // under it) but it is a plain memcpy against seconds of DSP.
-  function copyChannels(buffer) {
+  function copyChannels(buffer, offset, length) {
+    const start = offset || 0;
+    const end = length === undefined ? buffer.length : start + length;
     const out = [];
-    for (let c = 0; c < buffer.numberOfChannels; c++) out.push(buffer.getChannelData(c).slice());
+    for (let c = 0; c < buffer.numberOfChannels; c++) out.push(buffer.getChannelData(c).slice(start, end));
     return out;
   }
 
@@ -2532,16 +2534,115 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   // loudness. A small DC-compensated asymmetry is baked into the curve so it
   // generates even-order harmonics (tube-ish, warm) alongside the odd-order ones a
   // purely symmetric curve gives you (transistor-ish, hard).
-  function makeSaturationCurve(amount) {
+  // ---------- what the graph costs in time ----------
+  // Web Audio hides node latency, and two of the nodes here have plenty of it.
+  // An oversampled WaveShaper up-samples, shapes and down-samples through real
+  // filters and comes out 192 frames late. A DynamicsCompressor runs a 6 ms
+  // look-ahead delay line. Neither is reported by any property.
+  //
+  // That matters twice over. Anything that mixes a dry copy against a path
+  // through one of them is not a blend but a comb filter: measured on a master
+  // out of this app, the cepstrum showed a 73x peak at exactly 192 samples and a
+  // second at 576. A 4.4 ms slapback with notches every 230 Hz — the track
+  // doubled, shifted and ringing metallically on top, on every preset, because
+  // every preset saturates. And whatever is left delays the whole master against
+  // the track it came from, which is then what an A/B compares.
+  //
+  // So they are measured — an impulse through the node on its own, and where it
+  // comes out — and then the parallel paths are removed or delayed to match and
+  // the leftover is trimmed off the front of the render. Measured per sample
+  // rate, because the shaper's is a fixed frame count and the compressor's is a
+  // fixed time.
+  const NO_LATENCY = { shaper: 0, compressor: 0 };
+  const latencyProbes = new Map();
+
+  function chainLatency(sampleRate) {
+    if (!latencyProbes.has(sampleRate)) latencyProbes.set(sampleRate, measureLatency(sampleRate));
+    return latencyProbes.get(sampleRate);
+  }
+
+  async function measureLatency(sampleRate) {
+    try {
+      const n = 8192;
+      const at = 64;
+
+      async function offsetOf(build) {
+        const ctx = new OfflineAudioContext(1, n, sampleRate);
+        const buf = ctx.createBuffer(1, n, sampleRate);
+        // Far below any threshold in the chain, so a compressor delays the
+        // impulse without also changing it.
+        buf.getChannelData(0)[at] = 0.02;
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        const node = build(ctx);
+        src.connect(node);
+        node.connect(ctx.destination);
+        src.start(0);
+        const out = (await ctx.startRendering()).getChannelData(0);
+        let peakAt = 0, peak = 0;
+        for (let i = 0; i < n; i++) { const a = Math.abs(out[i]); if (a > peak) { peak = a; peakAt = i; } }
+        // No peak means a browser that does not delay here at all, and then
+        // there is nothing to compensate.
+        return peak > 0.005 ? Math.max(0, peakAt - at) : 0;
+      }
+
+      const shaper = await offsetOf(ctx => {
+        const ws = ctx.createWaveShaper();
+        const identity = new Float32Array(4096);
+        for (let i = 0; i < identity.length; i++) identity[i] = (i / (identity.length - 1)) * 2 - 1;
+        ws.curve = identity;
+        ws.oversample = '4x';
+        return ws;
+      });
+      const compressor = await offsetOf(ctx => {
+        const c = ctx.createDynamicsCompressor();
+        c.threshold.value = -20; c.ratio.value = 4;
+        c.attack.value = 0.01; c.release.value = 0.2; c.knee.value = 6;
+        return c;
+      });
+      return { shaper, compressor };
+    } catch (err) {
+      return NO_LATENCY;
+    }
+  }
+
+  // The two amounts that decide whether a shaper is in the chain at all, and
+  // therefore how far the chain delays the signal. One definition, used by the
+  // graph and by the frame count the render asks for, so the two cannot disagree.
+  const saturationAmount = (preset, intensity) => preset.saturation * intensity;
+
+  function exciterAmount(preset, intensity) {
+    const adapt = analysisData ? adaptiveMultiplier(analysisData.airRatio, TYPICAL_BALANCE.air) : 1;
+    return preset.air * intensity * adapt;
+  }
+
+  // Two compressors deep in every configuration: the multiband stage (all four
+  // bands identical, so they sum in step) and the glue bus.
+  function chainLatencyFrames(preset, intensity, lat) {
+    let frames = lat.compressor * 2;
+    if (saturationAmount(preset, intensity) > 0.02) frames += lat.shaper;
+    if (exciterAmount(preset, intensity) >= 0.02) frames += lat.shaper;
+    return frames;
+  }
+
+  // The dry/wet blend is built into the curve rather than into the graph. A
+  // parallel mix of a memoryless nonlinearity is itself a memoryless
+  // nonlinearity, so this is the same arithmetic with one path instead of two —
+  // and one path cannot comb against itself. The oversampling then applies to the
+  // blend as a whole, which is what makes the two sides come out aligned to the
+  // frame instead of 192 apart.
+  function makeSaturationCurve(amount, wetRatio) {
     const n = 4096;
     const curve = new Float32Array(n);
     const drive = 1 + amount * 2.2;
     const bias = 0.05 * amount;
     const dc = Math.tanh(drive * bias);
     const norm = Math.tanh(drive * (1 + bias)) - dc;
+    const wet = wetRatio === undefined ? 1 : wetRatio;
     for (let i = 0; i < n; i++) {
       const x = (i / (n - 1)) * 2 - 1;
-      curve[i] = (Math.tanh(drive * (x + bias)) - dc) / norm;
+      const shaped = (Math.tanh(drive * (x + bias)) - dc) / norm;
+      curve[i] = (1 - wet) * x + wet * shaped;
     }
     return curve;
   }
@@ -2688,7 +2789,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   // The band it works on starts at 5 kHz and is rolled off again at 15 kHz: lower
   // than that and it just manufactures sibilance, higher and it is only adding
   // fizz above where the harmonics are musically useful.
-  function applyExciter(ctx, sourceNode, amount) {
+  function applyExciter(ctx, sourceNode, amount, shaperLatency) {
     if (amount < 0.02) return sourceNode;
 
     const hpf = ctx.createBiquadFilter();
@@ -2722,12 +2823,24 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     tame.connect(wet);
 
     const sum = ctx.createGain();
-    sourceNode.connect(sum);
+    // Here the blend cannot be folded into the curve, because the wet side is
+    // filtered and a filter is not memoryless. So the dry side is delayed by the
+    // shaper's own latency instead, which a DelayNode does exactly at a whole
+    // number of frames. Without it this stage adds a 4 ms copy of everything
+    // above 5 kHz — the metallic half of the artefact.
+    if (shaperLatency > 0) {
+      const align = ctx.createDelay(1);
+      align.delayTime.value = shaperLatency / ctx.sampleRate;
+      sourceNode.connect(align);
+      align.connect(sum);
+    } else {
+      sourceNode.connect(sum);
+    }
     wet.connect(sum);
     return sum;
   }
 
-  function buildProcessingChain(ctx, sourceNode, preset, intensity, destination) {
+  function buildProcessingChain(ctx, sourceNode, preset, intensity, destination, lat) {
     // 0) Cleanup: remove sub-rumble/DC-ish content and ultrasonic content before
     // anything else touches the signal. Standard mastering hygiene, cheap insurance
     // against inter-sample peaks and mud.
@@ -2757,30 +2870,23 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       node = filter;
     });
 
-    // 4) Saturation — as a parallel blend: part dry, part saturated. That way, even
-    // at a preset's max saturation + 100% intensity, only a warming portion is
-    // audible, never a hard distortion of the whole signal.
-    const satAmount = preset.saturation * intensity;
+    // 4) Saturation — part dry, part saturated, so that even at a preset's max
+    // saturation and 100% intensity only a warming portion is audible rather than
+    // a hard distortion of everything. The blend lives in the curve, not in the
+    // graph: as two branches around an oversampled shaper it was a comb filter
+    // (see makeSaturationCurve), and as one curve it is the identical arithmetic.
+    const satAmount = saturationAmount(preset, intensity);
     if (satAmount > 0.02) {
-      const wetRatio = Math.min(0.5, satAmount * 0.7); // max. 50% wet
-      const dry = ctx.createGain(); dry.gain.value = 1 - wetRatio;
-      const wet = ctx.createGain(); wet.gain.value = wetRatio;
       const shaper = ctx.createWaveShaper();
-      shaper.curve = makeSaturationCurve(satAmount);
+      shaper.curve = makeSaturationCurve(satAmount, Math.min(0.5, satAmount * 0.7));
       shaper.oversample = '4x';
-      node.connect(dry);
       node.connect(shaper);
-      shaper.connect(wet);
-      const blend = ctx.createGain();
-      dry.connect(blend);
-      wet.connect(blend);
-      node = blend;
+      node = shaper;
     }
 
     // 5) Exciter — real harmonic "air" on top, not just an EQ boost. This is what
     // keeps a bright master feeling close and present instead of distant/behind glass.
-    const airAdapt = analysisData ? adaptiveMultiplier(analysisData.airRatio, TYPICAL_BALANCE.air) : 1;
-    node = applyExciter(ctx, node, preset.air * intensity * airAdapt);
+    node = applyExciter(ctx, node, exciterAmount(preset, intensity), lat.shaper);
 
     // 6) Stereo image — width above, mono below, and the optional Space stage
     // that works on the sides alone so a mono downmix is untouched by it.
@@ -2820,18 +2926,21 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   // render time and resumed — which is enough to report how far along it is. A
   // multi-minute track spends most of its mastering time in here, and a spinner
   // that sits still for ten seconds reads as a hang; a number that moves does not.
-  function renderChain(preset, intensity, onProgress) {
+  // The extra frames at the end are the chain's own latency: the render runs that
+  // much longer and the head is dropped afterwards, so the master lines up with
+  // the source to the sample instead of arriving a few milliseconds late.
+  function renderChain(preset, intensity, onProgress, lat) {
+    const frames = originalBuffer.length + chainLatencyFrames(preset, intensity, lat);
     const offlineCtx = new OfflineAudioContext(
-      originalBuffer.numberOfChannels, originalBuffer.length, originalBuffer.sampleRate
+      originalBuffer.numberOfChannels, frames, originalBuffer.sampleRate
     );
     const src = offlineCtx.createBufferSource();
     src.buffer = originalBuffer;
-    buildProcessingChain(offlineCtx, src, preset, intensity, offlineCtx.destination);
+    buildProcessingChain(offlineCtx, src, preset, intensity, offlineCtx.destination, lat);
     src.start(0);
 
     if (onProgress && typeof offlineCtx.suspend === 'function') {
       const steps = 25;
-      const frames = originalBuffer.length;
       const sr = originalBuffer.sampleRate;
       try {
         for (let i = 1; i < steps; i++) {
@@ -2868,13 +2977,15 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     const intensity = currentIntensity;
     const sr = originalBuffer.sampleRate;
     const { targetLufs, ceilingDb, matchLoudness } = effectiveTarget(preset);
+    const lat = await chainLatency(sr);
+    const pad = chainLatencyFrames(preset, intensity, lat);
 
     report('Mastering …');
     let rendered;
     try {
       rendered = await renderChain(preset, intensity, pct => {
         report('Mastering … ' + Math.round(pct * 100) + '%');
-      });
+      }, lat);
     } catch (err) {
       if (onStage()) alert('Mastering failed while rendering this track. Please try a shorter file.');
       return false;
@@ -2882,7 +2993,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     if (myToken !== masterToken) return false;
 
     report('Limiting …');
-    const channels = copyChannels(rendered);
+    const channels = copyChannels(rendered, pad, originalBuffer.length);
     const audioId = ++masterAudioSeq;
     let out;
     try {
@@ -2911,8 +3022,11 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     }
     if (myToken !== masterToken) return false;
 
-    for (let c = 0; c < out.channels.length; c++) rendered.copyToChannel(out.channels[c], c);
-    masteredBuffer = rendered;
+    const finished = pad
+      ? audioCtx.createBuffer(rendered.numberOfChannels, originalBuffer.length, sr)
+      : rendered;
+    for (let c = 0; c < out.channels.length; c++) finished.copyToChannel(out.channels[c], c);
+    masteredBuffer = finished;
     masteredBufferId = audioId;
     masterStats = out.stats || null;
     masterSpectrum = out.spectrum || null;
@@ -3542,15 +3656,17 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     const started = Date.now();
 
     try {
-      const offline = new OfflineAudioContext(labExcerpt.numberOfChannels, frames, sr);
+      const lat = await chainLatency(sr);
+      const pad = chainLatencyFrames(labPreset, currentIntensity, lat);
+      const offline = new OfflineAudioContext(labExcerpt.numberOfChannels, frames + pad, sr);
       const src = offline.createBufferSource();
       src.buffer = labExcerpt;
-      buildProcessingChain(offline, src, labPreset, currentIntensity, offline.destination);
+      buildProcessingChain(offline, src, labPreset, currentIntensity, offline.destination, lat);
       src.start(0);
       const rendered = await offline.startRendering();
       if (token !== labSeq) return;
 
-      const channels = copyChannels(rendered);
+      const channels = copyChannels(rendered, pad, frames);
       const t = effectiveTarget(labPreset);
       const out = await dsp.call('finalize', {
         channels,
@@ -3565,8 +3681,11 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       }, transferListOf(channels));
       if (token !== labSeq) return;
 
-      for (let c = 0; c < out.channels.length; c++) rendered.copyToChannel(out.channels[c], c);
-      labMastered_ = sealLoop(rendered, xfade);
+      const finished = pad
+        ? audioCtx.createBuffer(rendered.numberOfChannels, frames, sr)
+        : rendered;
+      for (let c = 0; c < out.channels.length; c++) finished.copyToChannel(out.channels[c], c);
+      labMastered_ = sealLoop(finished, xfade);
       labWetSpectrum = out.spectrum || null;
       labStatsData = out.stats || null;
       labDrawSpectrum();
