@@ -112,6 +112,9 @@
 
   /* Presets */
   .presets{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;}
+  /* The readout tiles above use the same border and radius as a style tile, so
+     without a clear gap the two grids read as one list of eight things. */
+  #sourceStats{margin-bottom:26px;}
   .preset{
     background:#ffffff;border:1px solid var(--line);border-left:1px solid var(--line);border-radius:10px;
     padding:17px 15px;cursor:pointer;transition:background .15s, transform .15s;
@@ -178,7 +181,8 @@
   .lab-group > h3::after{content:'–';color:var(--sub);font-size:0.85rem;line-height:1;}
   .lab-group.collapsed > h3{margin-bottom:0;}
   .lab-group.collapsed > h3::after{content:'+';}
-  .lab-group.collapsed .lab-row{display:none;}
+  .lab-group.collapsed .lab-row,
+  .lab-group.collapsed .lab-group-desc{display:none;}
   .lab-row{display:grid;grid-template-columns:minmax(88px,120px) 1fr minmax(64px,72px);
     align-items:center;gap:12px;padding:3px 0;}
   .lab-row label{font-size:0.75rem;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -187,11 +191,80 @@
   .lab-row.changed label{color:var(--text);font-weight:600;}
   .lab-row.changed .lab-val::after{content:' •';}
 
+  .lab-group-desc{font-size:0.7rem;color:var(--sub);line-height:1.5;margin:-4px 0 10px;}
+  .lab-hint{font-size:0.7rem;color:var(--sub);line-height:1.5;margin:3px 0 0;}
+  .recommend-note{font-size:0.72rem;color:var(--sub);line-height:1.5;margin:10px 0 0;}
+
+  /* ---------- pictures ---------- */
+  .viz{margin-top:16px;}
+  .viz-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px;}
+  .viz-head b{font-size:0.68rem;text-transform:uppercase;letter-spacing:0.09em;font-weight:600;}
+  .viz-head span{font-size:0.68rem;color:var(--sub);text-align:right;}
+  .viz canvas{display:block;width:100%;background:#ffffff;border:1px solid var(--line);border-radius:10px;}
+  .viz-spec canvas{height:150px;}
+  .viz-eq canvas{height:98px;}
+  .viz-wave canvas{height:78px;cursor:pointer;touch-action:none;}
+
+  .stat-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:14px;}
+  .stat{border:1px solid var(--line);border-radius:10px;padding:9px 10px;background:#ffffff;}
+  .stat b{display:block;font-size:0.92rem;font-variant-numeric:tabular-nums;line-height:1.2;}
+  .stat span{display:block;font-size:0.6rem;text-transform:uppercase;letter-spacing:0.07em;
+    color:var(--sub);margin-top:3px;}
+
+  /* ---------- the six that matter ---------- */
+  .lab-macros{margin-top:24px;}
+  .lab-macro{padding:11px 0;border-top:1px solid #f0f0f0;}
+  .lab-macro:first-child{border-top:none;}
+  .lab-macro .lab-row{padding:0;}
+  /* A native range fills from its minimum, which on a control whose neutral
+     position is the middle reads as "half on" rather than "untouched". These
+     fill outwards from the centre instead. */
+  .lab-macro input[type=range]{-webkit-appearance:none;appearance:none;background:none;height:20px;}
+  .lab-macro input[type=range]::-webkit-slider-runnable-track{
+    height:4px;border-radius:2px;background:var(--fill,#e3e3e3);
+  }
+  .lab-macro input[type=range]::-moz-range-track{
+    height:4px;border-radius:2px;background:var(--fill,#e3e3e3);
+  }
+  .lab-macro input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+    background:#000000;margin-top:-5.5px;
+  }
+  .lab-macro input[type=range]::-moz-range-thumb{
+    width:15px;height:15px;border:none;border-radius:50%;background:#000000;
+  }
+  .lab-macro .lab-row label{font-size:0.82rem;color:var(--text);font-weight:600;}
+  .lab-macro.changed .lab-row label::after{content:' •';}
+
+  .lab-adv{margin-top:26px;border-top:1px solid var(--line);padding-top:14px;}
+  .lab-adv-toggle{
+    background:none;border:none;padding:0;cursor:pointer;font:inherit;color:var(--text);
+    font-size:0.68rem;text-transform:uppercase;letter-spacing:0.09em;font-weight:600;
+    display:flex;align-items:center;gap:8px;
+  }
+  .lab-adv-toggle::after{content:'+';color:var(--sub);font-size:0.9rem;line-height:1;}
+  .lab-adv.open .lab-adv-toggle::after{content:'–';}
+  .lab-adv-note{font-size:0.7rem;color:var(--sub);line-height:1.5;margin:8px 0 0;}
+  .lab-params{display:none;}
+  .lab-adv.open .lab-params{display:block;}
+
   @media (max-width:560px){
     .lab-row{grid-template-columns:minmax(74px,96px) 1fr 58px;gap:8px;}
     .lab-row label{font-size:0.72rem;}
     .lab-transport{gap:8px;}
     .lab-status{width:100%;margin-left:0;text-align:left;}
+    .stat-row{grid-template-columns:repeat(2,minmax(0,1fr));}
+    .viz-spec canvas{height:132px;}
+    /* The six get the whole width on a phone: a bipolar control squeezed into
+       170px between a label and a readout is not something a thumb can aim. */
+    .lab-macro .lab-row{
+      grid-template-columns:1fr auto;
+      grid-template-areas:'label value' 'slider slider';
+      row-gap:6px;
+    }
+    .lab-macro .lab-row label{grid-area:label;}
+    .lab-macro .lab-row .lab-val{grid-area:value;}
+    .lab-macro .lab-row input[type=range]{grid-area:slider;}
   }
 
   /* Three buttons plus a label and a readout do not fit on a phone in one line,
@@ -345,7 +418,15 @@
 
   <section id="presetSection">
     <h2>Choose a mastering style</h2>
+
+    <div class="viz viz-spec">
+      <div class="viz-head"><b>Your track</b><span>what the app heard</span></div>
+      <canvas id="sourceSpecCanvas"></canvas>
+    </div>
+    <div class="stat-row" id="sourceStats"></div>
+
     <div class="presets" id="presetGrid"></div>
+    <p class="recommend-note" id="recommendNote"></p>
 
     <div class="intensity-row">
       <label>Intensity</label>
@@ -384,9 +465,10 @@
   <section id="labSection">
     <h2>Experimental</h2>
     <p class="lab-intro">
-      Every number the selected style is built from, live. A short loop taken from
-      the busiest part of the track re-masters on each change, so one move is one
-      listen.
+      Shape the selected style yourself. A short loop from the busiest part of your
+      track re-masters on every change, so you always hear what a move does — and
+      see it, in the curves below. Start with the six controls; open
+      <b>All parameters</b> if you want the individual numbers.
     </p>
 
     <div class="lab-transport">
@@ -398,7 +480,33 @@
       <span class="lab-status" id="labStatus"></span>
     </div>
 
-    <div class="lab-params" id="labParams"></div>
+    <div class="viz viz-spec">
+      <div class="viz-head"><b>Tonal balance</b><span id="labSpecNote">original vs. mastered</span></div>
+      <canvas id="labSpecCanvas"></canvas>
+    </div>
+
+    <div class="viz viz-eq">
+      <div class="viz-head"><b>Character EQ</b><span>follows the sliders instantly</span></div>
+      <canvas id="labEqCanvas"></canvas>
+    </div>
+
+    <div class="viz viz-wave">
+      <div class="viz-head"><b>The loop</b><span>tap anywhere to jump there</span></div>
+      <canvas id="labWaveCanvas"></canvas>
+    </div>
+
+    <div class="stat-row" id="labStats"></div>
+
+    <div class="lab-macros" id="labMacros"></div>
+
+    <div class="lab-adv" id="labAdv">
+      <button class="lab-adv-toggle" id="labAdvToggle" aria-expanded="false">All parameters</button>
+      <p class="lab-adv-note">
+        Every number the style is built from. The six controls above write into
+        these, so moving one of them rewrites the rows it owns.
+      </p>
+      <div class="lab-params" id="labParams"></div>
+    </div>
 
     <div class="action-row">
       <button class="btn" id="labMasterBtn">Master full track →</button>
@@ -410,7 +518,15 @@
 
   <section id="resultSection">
     <h2>Original vs. Mastered</h2>
-    <div class="playbar">
+
+    <div class="viz viz-spec">
+      <div class="viz-head"><b>Tonal balance</b><span>what the mastering changed</span></div>
+      <canvas id="resultSpecCanvas"></canvas>
+    </div>
+
+    <div class="stat-row" id="resultStats"></div>
+
+    <div class="playbar" style="margin-top:16px;">
       <button class="btn" id="playBtn">▶ Play</button>
       <div class="ab-toggle">
         <button id="btnOrig" class="active">Original</button>
@@ -782,27 +898,93 @@ function createSignalDsp() {
   // only evaluated in the top tenth of a dB below the ceiling, where it almost
   // never engages after a correct limiter — it exists so nothing can leave this
   // app above the declared ceiling without a hard clip's harsh odd-order spray.
+  // Returns the sample peak of the finished audio. It is free here — every
+  // sample is being written anyway — and it is what gates the true-peak scan
+  // afterwards, which would otherwise need a full pass of its own just to find it.
+  // The two fade regions are excluded from the running maximum and checked after
+  // the fades instead, so the value is the finished file's, not the pre-fade one's.
   function finishSamples(chans, gain, scale, ceiling, sr, softClip) {
     const n = chans[0].length;
     const knee = softClip ? ceiling * 0.9 : Infinity;
     const span = ceiling - ceiling * 0.9;
     const fin = Math.min(Math.round(sr * 0.002), n >> 1);
     const fout = Math.min(Math.round(sr * 0.006), n >> 1);
+    const fadeTail = n - fout;
+    let peak = 0;
     for (let c = 0; c < chans.length; c++) {
       const x = chans[c];
       for (let i = 0; i < n; i++) {
         let v = x[i] * gain[i] * scale;
-        const a = v < 0 ? -v : v;
+        let a = v < 0 ? -v : v;
         if (a > knee) {
-          const y = knee + span * Math.tanh((a - knee) / span);
-          v = v < 0 ? -y : y;
+          a = knee + span * Math.tanh((a - knee) / span);
+          v = v < 0 ? -a : a;
         }
         x[i] = v;
+        if (a > peak && i >= fin && i < fadeTail) peak = a;
       }
       // 2 ms in / 6 ms out, so a master can never start or end on a DC step.
       for (let i = 0; i < fin; i++) x[i] *= i / fin;
       for (let i = 0; i < fout; i++) x[n - 1 - i] *= i / fout;
+      for (let i = 0; i < fin; i++) { const a = x[i] < 0 ? -x[i] : x[i]; if (a > peak) peak = a; }
+      for (let i = fadeTail; i < n; i++) { const a = x[i] < 0 ? -x[i] : x[i]; if (a > peak) peak = a; }
     }
+    return peak;
+  }
+
+  // The true peak of finished audio, without a second full-length envelope.
+  //
+  // A kernel window can only interpolate to at most L1 times its largest sample,
+  // so a window holding nothing at or above (sample peak / L1) cannot beat the
+  // sample peak and is skipped outright — exactly, not just safely. How many
+  // samples of the current window qualify is carried along as the window slides,
+  // which makes that decision two comparisons per sample. On quiet or dynamic
+  // material almost everything is skipped; on a master sitting at the ceiling the
+  // gate is 7 dB down and lets most of it through, which is why this runs after
+  // the result is on screen rather than in front of it.
+  //
+  // This is the 4x measure BS.1770-4 specifies, so it is what any compliant meter
+  // reports — but 4x is a grid, and a peak that falls between its points is
+  // missed. Measured against a 32x/64-tap reference on a limited master it reads
+  // about 0.2 dB low, always in that direction. The ceiling guard is sized for
+  // exactly that, which is why the file still lands under its declared ceiling.
+  function outputTruePeak(chans, samplePeak) {
+    if (!(samplePeak > 0)) return 0;
+    const n = chans[0].length;
+    if (n < TP_LEN) return samplePeak;
+    const gate = samplePeak / truePeakL1();
+    const kern = getTpKernels();
+    const k0 = kern[0], k1 = kern[1], k2 = kern[2];
+    const lead = TP_LEN / 2 - 1;
+    const hi = n - (TP_LEN - lead);
+    let peak = samplePeak;
+    for (let c = 0; c < chans.length; c++) {
+      const x = chans[c];
+      let hot = 0;
+      for (let t = 0; t < TP_LEN; t++) if ((x[t] < 0 ? -x[t] : x[t]) >= gate) hot++;
+      for (let i = lead; i < hi; i++) {
+        const base = i - lead;
+        if (i > lead) {
+          const gone = x[base - 1];
+          if ((gone < 0 ? -gone : gone) >= gate) hot--;
+          const came = x[base + TP_LEN - 1];
+          if ((came < 0 ? -came : came) >= gate) hot++;
+        }
+        if (hot === 0) continue;
+        let a0 = 0, a1 = 0, a2 = 0;
+        for (let t = 0; t < TP_LEN; t++) {
+          const v = x[base + t];
+          a0 += v * k0[t]; a1 += v * k1[t]; a2 += v * k2[t];
+        }
+        if (a0 < 0) a0 = -a0;
+        if (a1 < 0) a1 = -a1;
+        if (a2 < 0) a2 = -a2;
+        if (a1 > a0) a0 = a1;
+        if (a2 > a0) a0 = a2;
+        if (a0 > peak) peak = a0;
+      }
+    }
+    return peak;
   }
 
   // ---------- spectrum ----------
@@ -897,6 +1079,53 @@ function createSignalDsp() {
     };
   }
 
+  // ---------- the curve the page draws ----------
+  // An FFT hands back bins spaced linearly, which is close to useless to look at:
+  // the top octave alone owns half of them, and the two octaves that decide
+  // whether a record has a bottom end own about four. So the bins are pooled into
+  // equal musical intervals, and no per-bin averaging is done inside a band —
+  // what comes out is energy per constant fraction of an octave, which is how a
+  // spectrum has to be drawn before differences of a few dB are visible at all.
+  const SPECTRUM_BANDS = 64;
+  const SPECTRUM_FFT = 16384;   // 2.7 Hz bins: fine enough that even the 25 Hz band gets its own
+
+  function spectrumCurve(chans, sr) {
+    const n = chans[0].length;
+    // The mid signal, because tonal balance is a property of the record, not of
+    // one side of it.
+    const mid = new Float32Array(n);
+    if (chans.length > 1) {
+      const a = chans[0], b = chans[1];
+      for (let i = 0; i < n; i++) mid[i] = (a[i] + b[i]) * 0.5;
+    } else {
+      mid.set(chans[0]);
+    }
+
+    const fftSize = Math.min(SPECTRUM_FFT, 1 << Math.floor(Math.log2(Math.max(256, n))));
+    const mags = computeAveragedSpectrum(mid, sr, fftSize, 16);
+    const fHi = Math.min(20000, sr / 2);
+    const fLo = 20;
+    const out = new Float32Array(SPECTRUM_BANDS);
+    const freqs = new Float32Array(SPECTRUM_BANDS);
+    for (let b = 0; b < SPECTRUM_BANDS; b++) {
+      const lo = fLo * Math.pow(fHi / fLo, b / SPECTRUM_BANDS);
+      const hi = fLo * Math.pow(fHi / fLo, (b + 1) / SPECTRUM_BANDS);
+      freqs[b] = Math.sqrt(lo * hi);
+      const loBin = Math.max(1, Math.round(lo * fftSize / sr));
+      const hiBin = Math.max(loBin, Math.min(mags.length - 1, Math.round(hi * fftSize / sr)));
+      let e = 0;
+      for (let i = loBin; i <= hiBin; i++) e += mags[i] * mags[i];
+      out[b] = 10 * Math.log10(e + 1e-20);
+    }
+    return { db: out, freqs };
+  }
+
+  function spectrum(args) {
+    const c = spectrumCurve(args.channels, args.sampleRate);
+    const lufs = measureLufs(args.channels, args.sampleRate);
+    return { result: { db: c.db, freqs: c.freqs, lufs }, transfer: [c.db.buffer, c.freqs.buffer] };
+  }
+
   function spectralCentroid(mags, sr, fftSize) {
     let num = 0, den = 0;
     for (let i = 0; i < mags.length; i++) {
@@ -976,15 +1205,22 @@ function createSignalDsp() {
     const avgLoudDb = 20 * Math.log10(avgLoud || 1e-12);
 
     const fftSize = 8192;
-    const spectrum = computeAveragedSpectrum(ch0, sr, fftSize, 16);
-    const balance = bandEnergyRatio(spectrum, sr, fftSize);
+    const mags = computeAveragedSpectrum(ch0, sr, fftSize, 16);
+    const balance = bandEnergyRatio(mags, sr, fftSize);
+
+    // The channels are already here, so the "before" curve the result screen
+    // draws costs one more pass instead of a second trip across the thread.
+    const curve = spectrumCurve(chans, sr);
 
     return {
+      transfer: [curve.db.buffer, curve.freqs.buffer],
       result: {
+        spectrum: { db: curve.db, freqs: curve.freqs },
         lufs: Math.round(lufs * 10) / 10,
         truePeakDb: Math.round(truePeakDb * 10) / 10,
+        sampleRate: sr,
         dynamicRange: Math.round(Math.abs(truePeakDb - avgLoudDb) * 10) / 10,
-        centroidHz: Math.round(spectralCentroid(spectrum, sr, fftSize)),
+        centroidHz: Math.round(spectralCentroid(mags, sr, fftSize)),
         lowPulse: lowEndPulse(ch0, sr),
         duration: n / sr,
         bassRatio: balance.bassRatio,
@@ -1016,6 +1252,7 @@ function createSignalDsp() {
     const gain = new Float32Array(n);
     const L1 = truePeakL1();
     let scale;
+    let outLufs = null;   // what the finished audio measures, for the readout
 
     if (matchLoudness) {
       // What the chain produced, corrected for the render headroom analytically.
@@ -1044,7 +1281,7 @@ function createSignalDsp() {
       for (let pass = 0; pass < 4; pass++) {
         const limited = measureLufs(chans, sr, gain, scale);
         const err = target - limited;
-        if (Math.abs(err) < bestErr) { bestErr = Math.abs(err); bestScale = scale; }
+        if (Math.abs(err) < bestErr) { bestErr = Math.abs(err); bestScale = scale; outLufs = limited; }
         if (Math.abs(err) <= 0.15 || pass === 3) break;
         scale *= Math.pow(10, clamp(err, -3, 3) / 20);
         // A louder target means a lower effective ceiling in source terms, so the
@@ -1077,13 +1314,37 @@ function createSignalDsp() {
       // and pulling its dither up to full scale would help nobody.
       scale = truePeak > 0 ? Math.min(ceiling / truePeak, 100) : headroomGain;
       buildLimiterGain(env, gain, sr, ceiling, scale);
+      outLufs = measureLufs(chans, sr, gain, scale);
     }
+
+    // How hard the limiter had to work, which `gain` already holds.
+    let minGain = 1;
+    for (let i = 0; i < n; i++) if (gain[i] < minGain) minGain = gain[i];
 
     // The safety clip is a net under the limiter. In peak mode the limiter never
     // engages and the ceiling already holds by arithmetic, so clipping there
     // would be the one thing in the whole path that touched the dynamics after
     // the user asked for them to be left alone.
-    finishSamples(chans, gain, scale, ceiling, sr, matchLoudness);
+    const outSamplePeak = finishSamples(chans, gain, scale, ceiling, sr, matchLoudness);
+
+    // Measured on the finished audio, not predicted from the envelope. The
+    // prediction — the true-peak envelope times the limiter gain — is an upper
+    // bound and not a value: the gain curve moves inside the span an interpolation
+    // kernel reads, so the real peak always lands under it. It read exactly the
+    // ceiling on every limited track, which is the internal working ceiling rather
+    // than anything to do with the file that comes out.
+    // On a few seconds of audio that is nothing, so the preview measures it
+    // inline. On a whole track it costs the better part of a second, which is a
+    // poor trade for a readout — there the page asks for it separately, once the
+    // master is already on screen, through the op below.
+    const stats = {
+      lufs: outLufs,
+      samplePeakDb: 20 * Math.log10(outSamplePeak || 1e-12),
+      truePeakDb: args.truePeak === false
+        ? null : 20 * Math.log10(outputTruePeak(chans, outSamplePeak) || 1e-12),
+      gainDb: 20 * Math.log10(scale * args.renderHeadroom),
+      limitDb: -20 * Math.log10(minGain || 1e-12),
+    };
 
     // Hand the page a copy and keep the originals here, so exporting does not
     // have to ship tens of megabytes back across the thread boundary again. The
@@ -1095,7 +1356,30 @@ function createSignalDsp() {
     // seconds of audio that nobody exports, and letting it take the slot would
     // force the next export to ship the whole master back across the thread.
     if (args.cache !== false) lastMaster = { id: args.id, channels: chans, sampleRate: sr };
-    return { result: { channels: out }, transfer: out.map(c => c.buffer) };
+
+    const result = { channels: out, stats };
+    const transfer = out.map(c => c.buffer);
+    // The finished audio is right here, so the curve the page draws costs one
+    // extra pass rather than a second trip across the thread boundary.
+    if (args.spectrum) {
+      const c = spectrumCurve(chans, sr);
+      result.spectrum = { db: c.db, freqs: c.freqs };
+      transfer.push(c.db.buffer, c.freqs.buffer);
+    }
+    return { result, transfer };
+  }
+
+  // The true peak of a master the worker is already holding. Nothing is sent
+  // either way, so this is pure computation on audio that is already here.
+  function truePeak(args) {
+    const chans = encodeSource(args);
+    const n = chans[0].length;
+    let samplePeak = 0;
+    for (let c = 0; c < chans.length; c++) {
+      const x = chans[c];
+      for (let i = 0; i < n; i++) { const a = x[i] < 0 ? -x[i] : x[i]; if (a > samplePeak) samplePeak = a; }
+    }
+    return { result: { truePeakDb: 20 * Math.log10(outputTruePeak(chans, samplePeak) || 1e-12) } };
   }
 
   // Resolves the audio an encode should run on: the cached master when the page
@@ -1253,7 +1537,7 @@ function createSignalDsp() {
 
   function ping() { return { result: { ok: true } }; }
 
-  return { ping, analyze, finalize, encodeWav, encodeMp3, initMp3 };
+  return { ping, analyze, spectrum, finalize, truePeak, encodeWav, encodeMp3, initMp3 };
 }
 
 // Worker entry point. In the in-page fallback this block simply does not run.
@@ -1283,6 +1567,9 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   const presetSection = document.getElementById('presetSection');
   const resultSection = document.getElementById('resultSection');
   const presetGrid = document.getElementById('presetGrid');
+  const sourceSpecCanvas = document.getElementById('sourceSpecCanvas');
+  const sourceStatsEl = document.getElementById('sourceStats');
+  const recommendNote = document.getElementById('recommendNote');
   const confirmPresetBtn = document.getElementById('confirmPresetBtn');
 
   const intensitySlider = document.getElementById('intensitySlider');
@@ -1313,6 +1600,16 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   const labOrig = document.getElementById('labOrig');
   const labMastered = document.getElementById('labMastered');
   const labStatus = document.getElementById('labStatus');
+  const labMacros = document.getElementById('labMacros');
+  const labAdv = document.getElementById('labAdv');
+  const labAdvToggle = document.getElementById('labAdvToggle');
+  const labSpecCanvas = document.getElementById('labSpecCanvas');
+  const labSpecNote = document.getElementById('labSpecNote');
+  const labEqCanvas = document.getElementById('labEqCanvas');
+  const labWaveCanvas = document.getElementById('labWaveCanvas');
+  const labStatsEl = document.getElementById('labStats');
+  const resultSpecCanvas = document.getElementById('resultSpecCanvas');
+  const resultStatsEl = document.getElementById('resultStats');
   const labMasterBtn = document.getElementById('labMasterBtn');
   const labResetBtn = document.getElementById('labResetBtn');
   const labCopyBtn = document.getElementById('labCopyBtn');
@@ -1343,7 +1640,10 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   let masteredBuffer = null;
   let loudnessMode = 'loud';  // 'loud' | 'streaming' | 'off'
   let spaceMode = 'off';      // 'off' | 'wide' | 'immersive'
-  let masteredBufferId = 0;  // ties the page's master to the worker's cached copy
+  let masteredBufferId = 0;
+  let masterStats = null;       // what the full master measured, for the result screen
+  let masterSpectrum = null;
+  let recommended = null;       // the suggested style, and the reason for it  // ties the page's master to the worker's cached copy
   let masterAudioSeq = 0;
   let masterRun = null;      // in-flight mastering promise, if any
   let speculativeTimer = null;
@@ -1636,6 +1936,8 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   function invalidateMaster() {
     masterToken++;
     masteredBuffer = null;
+    masterStats = null;
+    masterSpectrum = null;
     clearTimeout(speculativeTimer);
     if (playMode === 'mastered') setPlayMode('orig');
   }
@@ -1827,6 +2129,11 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   function showOnly(sectionEl) {
     [presetSection, loadingSection, resultSection, labSection].forEach(s => s.classList.remove('show'));
     if (sectionEl) sectionEl.classList.add('show');
+    // A canvas has no size until its section is on screen, so the drawing has to
+    // happen after the class is on, not before.
+    if (sectionEl === resultSection) drawResultVisuals();
+    else if (sectionEl === labSection) labDrawAll();
+    else if (sectionEl === presetSection) drawSourceVisuals();
   }
 
   function wait(ms) {
@@ -1847,6 +2154,14 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     labDry = null;
     labExcerptSource = null;
     labMastered_ = null;
+    labDrySpectrum = null;
+    labWetSpectrum = null;
+    labStatsData = null;
+    labMacroValues = {};
+    masterStats = null;
+    masterSpectrum = null;
+    recommended = null;
+    waveLayer = null;
     loudnessNote.textContent = '';
     spaceNote.textContent = '';
     setPlayMode('orig');
@@ -1996,7 +2311,9 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     const floor = 400; // just enough to avoid a jarring instant flash, not padding
     if (elapsed < floor) await wait(floor - elapsed);
 
-    selectPreset(recommendPreset(analysisData));
+    const pick = recommendPreset(analysisData);
+    recommended = pick;
+    selectPreset(pick.id);
     showOnly(presetSection);
   }
 
@@ -2042,15 +2359,21 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   // every beat, and plenty are bright — so requiring both keeps it from firing on
   // material it would not suit. When it does not fire, picking Strobe by hand is
   // one tap.
+  // Returns the reason along with the choice, because a suggestion nobody can see
+  // the basis of is just a preselected radio button.
   function recommendPreset(data) {
     const dr = data.dynamicRange;
     const c = data.centroidHz;
 
-    if (data.lowPulse >= 0.80 && data.airRatio >= TYPICAL_BALANCE.air) return 'strobe';
-    if (dr > 12) return 'driftwood';           // dynamic, acoustic-leaning material -> warm/nostalgic
-    if (c < 900) return 'blackout';            // bass-heavy, dark timbre -> dark & punchy
-    if (c > 2600 && dr < 9) return 'chromeline'; // bright + already fairly loud -> catchy/upfront
-    return 'halo';                             // everything else -> smooth, balanced
+    if (data.lowPulse >= 0.80 && data.airRatio >= TYPICAL_BALANCE.air)
+      return { id: 'strobe', why: 'a steady four-to-the-floor pulse in the low end' };
+    if (dr > 12)
+      return { id: 'driftwood', why: `${dr.toFixed(0)} dB between the peaks and the loud parts — dynamic material` };
+    if (c < 900)
+      return { id: 'blackout', why: 'a dark, bass-led balance' };
+    if (c > 2600 && dr < 9)
+      return { id: 'chromeline', why: 'bright, and already fairly loud' };
+    return { id: 'halo', why: 'a balanced mix with nothing that needs correcting hard' };
   }
 
   // ================================================================
@@ -2579,6 +2902,8 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
         // 0.5 dB covers it with room, costing 0.2 dB of peak level and no loudness.
         ceiling: Math.pow(10, (ceilingDb - 0.5) / 20),
         renderHeadroom: RENDER_HEADROOM,
+        spectrum: true,
+        truePeak: false,
       }, transferListOf(channels));
     } catch (err) {
       if (onStage()) alert('Mastering failed while finishing this track.');
@@ -2589,6 +2914,16 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     for (let c = 0; c < out.channels.length; c++) rendered.copyToChannel(out.channels[c], c);
     masteredBuffer = rendered;
     masteredBufferId = audioId;
+    masterStats = out.stats || null;
+    masterSpectrum = out.spectrum || null;
+    // The true peak of a whole track is the better part of a second of scanning,
+    // so it is asked for after the result is on screen rather than in front of
+    // it. The worker still holds the master, so nothing is sent for it.
+    dsp.call('truePeak', { id: audioId }).then(res => {
+      if (masteredBufferId !== audioId || !masterStats) return;
+      masterStats.truePeakDb = res.truePeakDb;
+      if (resultSection.classList.contains('show')) drawResultVisuals();
+    }).catch(() => {});
     if (playGraph) attachMasterToPlayback();
     return true;
   }
@@ -2777,6 +3112,328 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     return false;
   };
 
+
+  // ================================================================
+  //  PICTURES
+  // ================================================================
+  // Canvas rather than SVG: the EQ curve is redrawn on every slider move and the
+  // playhead once per animation frame, and rebuilding a few hundred DOM nodes at
+  // that rate is what makes a phone warm.
+  //
+  // Everything here is monochrome on purpose, like the rest of the app: the
+  // original is a grey ghost, the mastered signal is the black one. That reads at
+  // a glance and survives being looked at in sunlight on a phone.
+
+  const VIZ_INK = '#111111';
+  const VIZ_GHOST = '#bdbdbd';
+  const VIZ_GHOST_FILL = 'rgba(0,0,0,0.06)';
+  const VIZ_FILL = 'rgba(0,0,0,0.10)';
+  const VIZ_GRID = '#ededed';
+  const VIZ_SPLIT = '#dcdcdc';
+  const VIZ_SUB = '#9a9a9a';
+  const VIZ_FONT = '10px "IBM Plex Mono", ui-monospace, monospace';
+
+  const VIZ_F_MIN = 20, VIZ_F_MAX = 20000;
+  const VIZ_TICKS = [[50, '50'], [100, '100'], [250, '250'], [1000, '1k'], [4000, '4k'], [10000, '10k']];
+  // The multiband crossovers, drawn on both charts so a band's slider and the
+  // part of the picture it moves are visibly the same place.
+  const VIZ_SPLITS = [110, 900, 5200];
+
+  function vizFrame(canvas) {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w || !h) return null;
+    // Capped at 2: beyond that the extra pixels cost real time on a phone and
+    // buy nothing on a line drawing.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const pw = Math.round(w * dpr), ph = Math.round(h * dpr);
+    if (canvas.width !== pw || canvas.height !== ph) { canvas.width = pw; canvas.height = ph; }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.font = VIZ_FONT;
+    return { ctx, w, h };
+  }
+
+  function vizX(f, x0, x1) {
+    const v = clamp(f, VIZ_F_MIN, VIZ_F_MAX);
+    return x0 + (x1 - x0) * Math.log(v / VIZ_F_MIN) / Math.log(VIZ_F_MAX / VIZ_F_MIN);
+  }
+
+  function vizSplits(ctx, x0, x1, y0, y1) {
+    ctx.save();
+    ctx.setLineDash([2, 3]);
+    ctx.strokeStyle = VIZ_SPLIT;
+    ctx.lineWidth = 1;
+    for (const f of VIZ_SPLITS) {
+      const x = Math.round(vizX(f, x0, x1)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function vizTicks(ctx, x0, x1, y) {
+    ctx.fillStyle = VIZ_SUB;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (const [f, label] of VIZ_TICKS) ctx.fillText(label, vizX(f, x0, x1), y);
+  }
+
+  function vizEmpty(ctx, w, h, text) {
+    ctx.fillStyle = VIZ_SUB;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, w / 2, h / 2);
+  }
+
+  // ---------- tonal balance ----------
+  // Both curves are drawn on one absolute scale, so the vertical gap between them
+  // IS the level the mastering added. Normalising them to each other would have
+  // made the picture prettier and thrown that away.
+  function drawSpectrum(canvas, before, after, legend) {
+    const f = vizFrame(canvas);
+    if (!f) return;
+    const { ctx, w, h } = f;
+    const x0 = 8, x1 = w - 8, y0 = 20, y1 = h - 16;   // y0 leaves the legend its own strip
+    if (!before && !after) { vizEmpty(ctx, w, h, 'listening …'); return; }
+
+    let top = -Infinity;
+    for (const c of [before, after]) if (c) for (let i = 0; i < c.db.length; i++) if (c.db[i] > top) top = c.db[i];
+    if (!isFinite(top)) { vizEmpty(ctx, w, h, 'silence'); return; }
+    top += 2;
+    const bottom = top - 58;          // enough range for a real record, tight enough to read
+    const yOf = db => y1 - (clamp(db, bottom, top) - bottom) / (top - bottom) * (y1 - y0);
+
+    ctx.strokeStyle = VIZ_GRID;
+    ctx.lineWidth = 1;
+    for (let db = top - 10; db > bottom; db -= 10) {
+      const y = Math.round(yOf(db)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+    }
+    vizSplits(ctx, x0, x1, y0, y1);
+    vizTicks(ctx, x0, x1, y1 + 3);
+
+    function trace(curve) {
+      const n = curve.db.length;
+      ctx.beginPath();
+      ctx.moveTo(x0, yOf(curve.db[0]));
+      for (let i = 0; i < n; i++) ctx.lineTo(vizX(curve.freqs[i], x0, x1), yOf(curve.db[i]));
+      ctx.lineTo(x1, yOf(curve.db[n - 1]));
+    }
+
+    if (before) {
+      trace(before);
+      ctx.lineTo(x1, y1); ctx.lineTo(x0, y1); ctx.closePath();
+      ctx.fillStyle = VIZ_GHOST_FILL; ctx.fill();
+      trace(before);
+      ctx.strokeStyle = VIZ_GHOST; ctx.lineWidth = 1; ctx.stroke();
+    }
+    if (after) {
+      trace(after);
+      ctx.strokeStyle = VIZ_INK; ctx.lineWidth = 1.8; ctx.lineJoin = 'round'; ctx.stroke();
+    }
+
+    if (legend === false) return;
+    // On white, over whatever the curve happens to be doing up there.
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'right';
+    const legendW = ctx.measureText('original  mastered').width + 10;
+    ctx.fillStyle = 'rgba(255,255,255,0.88)';
+    ctx.fillRect(x1 - legendW, 4, legendW, 13);
+    if (after) { ctx.fillStyle = VIZ_INK; ctx.fillText('mastered', x1 - 2, 5); }
+    if (before) {
+      const gap = after ? ctx.measureText('mastered').width + 12 : 0;
+      ctx.fillStyle = VIZ_SUB; ctx.fillText('original', x1 - 2 - gap, 5);
+    }
+  }
+
+  // ---------- the character EQ ----------
+  // The response is asked of real BiquadFilterNodes rather than computed from a
+  // second copy of the same formulas, so the drawing cannot drift away from what
+  // the chain actually does to the audio.
+  function eqAxis(n, nyquist) {
+    const fMax = Math.min(VIZ_F_MAX, nyquist - 1);
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) out[i] = VIZ_F_MIN * Math.pow(fMax / VIZ_F_MIN, i / (n - 1));
+    return out;
+  }
+
+  function characterEqResponse(preset, intensity, freqs) {
+    const out = new Float32Array(freqs.length);
+    if (!audioCtx) return out;
+    const mag = new Float32Array(freqs.length);
+    const phase = new Float32Array(freqs.length);
+    const nyquist = audioCtx.sampleRate / 2;
+    for (const band of preset.eq) {
+      const node = audioCtx.createBiquadFilter();
+      node.type = band.type;
+      node.frequency.value = clamp(band.freq, 10, nyquist - 1);
+      node.Q.value = band.Q;
+      node.gain.value = band.gain * intensity;
+      node.getFrequencyResponse(freqs, mag, phase);
+      for (let i = 0; i < out.length; i++) out[i] += 20 * Math.log10(mag[i] || 1e-6);
+    }
+    return out;
+  }
+
+  function drawEqCurve(canvas, preset, intensity) {
+    const f = vizFrame(canvas);
+    if (!f) return;
+    const { ctx, w, h } = f;
+    const x0 = 8, x1 = w - 8, y0 = 18, y1 = h - 16;
+    if (!preset || !audioCtx) { vizEmpty(ctx, w, h, 'no style selected'); return; }
+
+    const freqs = eqAxis(180, audioCtx.sampleRate / 2);
+    const db = characterEqResponse(preset, intensity, freqs);
+    let peak = 0;
+    for (let i = 0; i < db.length; i++) if (Math.abs(db[i]) > peak) peak = Math.abs(db[i]);
+    const range = Math.max(6, Math.ceil(peak / 3) * 3);
+    const mid = (y0 + y1) / 2;
+    const yOf = v => mid - clamp(v, -range, range) / range * (y1 - y0) / 2;
+
+    ctx.strokeStyle = VIZ_GRID;
+    ctx.lineWidth = 1;
+    for (const v of [range / 2, -range / 2]) {
+      const y = Math.round(yOf(v)) + 0.5;
+      ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+    }
+    vizSplits(ctx, x0, x1, y0, y1);
+    vizTicks(ctx, x0, x1, y1 + 3);
+
+    ctx.beginPath();
+    for (let i = 0; i < db.length; i++) {
+      const x = vizX(freqs[i], x0, x1), y = yOf(db[i]);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    const last = vizX(freqs[db.length - 1], x0, x1);
+    ctx.lineTo(last, mid);
+    ctx.lineTo(vizX(freqs[0], x0, x1), mid);
+    ctx.closePath();
+    ctx.fillStyle = VIZ_FILL;
+    ctx.fill();
+
+    ctx.beginPath();
+    for (let i = 0; i < db.length; i++) {
+      const x = vizX(freqs[i], x0, x1), y = yOf(db[i]);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = VIZ_INK; ctx.lineWidth = 1.8; ctx.lineJoin = 'round'; ctx.stroke();
+
+    ctx.strokeStyle = '#d0d0d0';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, Math.round(mid) + 0.5); ctx.lineTo(x1, Math.round(mid) + 0.5); ctx.stroke();
+
+    ctx.fillStyle = VIZ_SUB;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText('±' + range + ' dB', x0, 5);
+  }
+
+  // ---------- the loop ----------
+  const wavePeakCache = new WeakMap();
+
+  function wavePeaks(buffer, cols) {
+    const cached = wavePeakCache.get(buffer);
+    if (cached && cached.cols === cols) return cached.peaks;
+    const n = buffer.length;
+    const peaks = new Float32Array(cols);
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      const data = buffer.getChannelData(c);
+      for (let i = 0; i < cols; i++) {
+        const s = Math.floor(i * n / cols), e = Math.min(n, Math.floor((i + 1) * n / cols));
+        let m = peaks[i];
+        for (let j = s; j < e; j++) { const a = data[j] < 0 ? -data[j] : data[j]; if (a > m) m = a; }
+        peaks[i] = m;
+      }
+    }
+    wavePeakCache.set(buffer, { cols, peaks });
+    return peaks;
+  }
+
+  // The two envelopes never change while the playhead moves over them, so they
+  // are drawn once into an offscreen layer and blitted afterwards. Redrawing two
+  // thousand-point paths sixty times a second to move a single line is the kind
+  // of thing that turns a phone into a hand warmer.
+  let waveLayer = null;
+
+  function waveLayerFor(dry, wet, w, h, dpr) {
+    if (waveLayer && waveLayer.dry === dry && waveLayer.wet === wet &&
+        waveLayer.w === w && waveLayer.h === h && waveLayer.dpr === dpr) return waveLayer.canvas;
+    const off = document.createElement('canvas');
+    off.width = Math.round(w * dpr);
+    off.height = Math.round(h * dpr);
+    const c = off.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cols = Math.max(32, Math.round(w));
+    const mid = h / 2;
+    const half = h / 2 - 5;
+    function shape(buffer, fill, stroke) {
+      const peaks = wavePeaks(buffer, cols);
+      c.beginPath();
+      for (let i = 0; i < cols; i++) c.lineTo(i * w / cols, mid - peaks[i] * half);
+      for (let i = cols - 1; i >= 0; i--) c.lineTo(i * w / cols, mid + peaks[i] * half);
+      c.closePath();
+      if (fill) { c.fillStyle = fill; c.fill(); }
+      if (stroke) { c.strokeStyle = stroke; c.lineWidth = 1; c.stroke(); }
+    }
+    shape(dry, VIZ_GHOST_FILL, VIZ_GHOST);
+    if (wet) shape(wet, null, VIZ_INK);
+    waveLayer = { dry, wet, w, h, dpr, canvas: off };
+    return off;
+  }
+
+  function drawWave(canvas, dry, wet, position) {
+    const f = vizFrame(canvas);
+    if (!f) return;
+    const { ctx, w, h } = f;
+    if (!dry) { vizEmpty(ctx, w, h, 'no loop yet'); return; }
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    ctx.drawImage(waveLayerFor(dry, wet, w, h, dpr), 0, 0, w, h);
+
+    if (position !== null && position !== undefined) {
+      const x = Math.round(clamp(position, 0, 1) * w) + 0.5;
+      ctx.strokeStyle = VIZ_INK;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(x, 2); ctx.lineTo(x, h - 2); ctx.stroke();
+      ctx.fillStyle = VIZ_INK;
+      ctx.beginPath();
+      ctx.moveTo(x - 4, 0); ctx.lineTo(x + 4, 0); ctx.lineTo(x, 6);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
+  // ---------- the four numbers ----------
+  function renderStats(el, items) {
+    el.innerHTML = '';
+    for (const item of items) {
+      const box = document.createElement('div');
+      box.className = 'stat';
+      const value = document.createElement('b');
+      value.textContent = item.value;
+      const label = document.createElement('span');
+      label.textContent = item.label;
+      box.appendChild(value);
+      box.appendChild(label);
+      el.appendChild(box);
+    }
+  }
+
+  const signed = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1);
+
+  function statsFrom(stats, sourceLufs) {
+    if (!stats) return [];
+    const louder = (stats.lufs !== null && stats.lufs !== undefined &&
+                    sourceLufs !== null && sourceLufs !== undefined && isFinite(sourceLufs))
+      ? `${signed(stats.lufs - sourceLufs)} dB` : `${signed(stats.gainDb)} dB`;
+    return [
+      { label: 'Loudness', value: stats.lufs === null || stats.lufs === undefined
+        ? '—' : `${stats.lufs.toFixed(1)} LUFS` },
+      { label: 'True peak', value: stats.truePeakDb === null || stats.truePeakDb === undefined
+        ? '…' : `${stats.truePeakDb.toFixed(2)} dBTP` },
+      { label: 'Louder by', value: louder },
+      { label: 'Peak limiting', value: stats.limitDb < 0.05 ? 'none' : `−${stats.limitDb.toFixed(1)} dB` },
+    ];
+  }
+
   // ================================================================
   //  EXPERIMENTAL
   // ================================================================
@@ -2795,6 +3452,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   let labExcerpt = null;        // the untouched excerpt, pre-seal
   let labDry = null;            // the same excerpt, sealed for looping
   let labExcerptSource = null;  // which decoded file the excerpt was cut from
+  let labExcerptStart = 0;      // where in the track it was taken from, in seconds
   let labMastered_ = null;      // the mastered excerpt currently looping
   let labGraph = null;
   let labMode = 'mastered';
@@ -2804,7 +3462,13 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   let labPending = false;
   let labSeq = 0;
   let labAutoStart = false;     // start the loop once the first preview is ready
-  let labRows = [];             // one entry per slider on screen
+  let labRows = [];             // one entry per detail slider on screen
+  let labMacroRows = [];        // one entry per plain-language control
+  let labMacroValues = {};      // -100..100 per control, 0 = the style as it ships
+  let labDrySpectrum = null;    // the excerpt's own curve, computed once per file
+  let labWetSpectrum = null;    // the current preview's curve
+  let labStatsData = null;      // loudness / peak / level / limiting of the preview
+  let labRaf = 0;
   let labCustomRev = 0;         // makes each edited style its own cache key
 
   // Where in the track is most representative? Not the middle — that can be a
@@ -2897,11 +3561,17 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
         matchLoudness: t.matchLoudness,
         ceiling: Math.pow(10, (t.ceilingDb - 0.5) / 20),
         renderHeadroom: RENDER_HEADROOM,
+        spectrum: true,
       }, transferListOf(channels));
       if (token !== labSeq) return;
 
       for (let c = 0; c < out.channels.length; c++) rendered.copyToChannel(out.channels[c], c);
       labMastered_ = sealLoop(rendered, xfade);
+      labWetSpectrum = out.spectrum || null;
+      labStatsData = out.stats || null;
+      labDrawSpectrum();
+      labDrawStats();
+      labDrawWave();
       labSetStatus(`${Date.now() - started} ms`, false);
       // Swapping the buffer under a running loop keeps the position, so a change
       // is heard at the point of the excerpt you were already listening to.
@@ -2975,6 +3645,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     labGraph = graph;
     labPlaying = true;
     labPlayBtn.innerHTML = '<span class="stop-icon"></span> Loop';
+    labStartTicking();
   }
 
   // The choice is remembered even while no master exists yet, so the first
@@ -2995,6 +3666,8 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     labPlaying = false;
     labAutoStart = false;
     labPlayBtn.textContent = '▶ Loop';
+    labStopTicking();
+    labDrawWave();
   }
 
   labPlayBtn.addEventListener('click', () => {
@@ -3027,17 +3700,22 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
   // share one row definition; only the glue has no makeup stage.
   function labCompParams(pick, withMakeup) {
     const rows = [
-      { label: 'Threshold', min: -45,    max: -3,  step: 0.5,    fmt: fmtDb,
+      { label: 'Threshold', tip: 'The level where it starts holding the band back.',
+        min: -45,    max: -3,  step: 0.5,    fmt: fmtDb,
         get: p => pick(p).thresh,  set: (p, v) => { pick(p).thresh = v; } },
-      { label: 'Ratio',     min: 1,      max: 10,  step: 0.1,    fmt: fmtRat,
+      { label: 'Ratio',     tip: 'How hard it holds it back once it is past the threshold.',
+        min: 1,      max: 10,  step: 0.1,    fmt: fmtRat,
         get: p => pick(p).ratio,   set: (p, v) => { pick(p).ratio = v; } },
-      { label: 'Attack',    min: 0.0005, max: 0.1, step: 0.0005, fmt: fmtMs,
+      { label: 'Attack',    tip: 'How much of each hit gets through untouched first. Slower means more punch.',
+        min: 0.0005, max: 0.1, step: 0.0005, fmt: fmtMs,
         get: p => pick(p).attack,  set: (p, v) => { pick(p).attack = v; } },
-      { label: 'Release',   min: 0.02,   max: 0.8, step: 0.01,   fmt: fmtMs,
+      { label: 'Release',   tip: 'How quickly it lets go again once the signal drops.',
+        min: 0.02,   max: 0.8, step: 0.01,   fmt: fmtMs,
         get: p => pick(p).release, set: (p, v) => { pick(p).release = v; } },
     ];
     if (withMakeup) rows.push(
-      { label: 'Makeup',    min: 0.3,    max: 3,   step: 0.01,   fmt: fmtX,
+      { label: 'Makeup',    tip: 'How much level the band gets back afterwards.',
+        min: 0.3,    max: 3,   step: 0.01,   fmt: fmtX,
         get: p => pick(p).makeup,  set: (p, v) => { pick(p).makeup = v; } });
     return rows;
   }
@@ -3060,18 +3738,32 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     let eq = [];
     preset.eq.forEach((band, i) => { eq = eq.concat(labEqParams(i, band.type)); });
     return [
-      { title: 'Low · below 110 Hz',     params: labCompParams(p => p.bands.low, true) },
-      { title: 'Low mid · 110–900 Hz',   params: labCompParams(p => p.bands.lowMid, true) },
-      { title: 'High mid · 900–5200 Hz', params: labCompParams(p => p.bands.highMid, true) },
-      { title: 'Air · above 5200 Hz',    params: labCompParams(p => p.bands.air, true) },
-      { title: 'Character EQ', params: eq },
-      { title: 'Colour', params: [
+      { title: 'Low · below 110 Hz',
+        desc: 'The sub and the weight of the kick, with a compressor of its own.',
+        params: labCompParams(p => p.bands.low, true) },
+      { title: 'Low mid · 110–900 Hz',
+        desc: 'The body of the mix: bass notes, the chest of a kick, the bottom of most instruments.',
+        params: labCompParams(p => p.bands.lowMid, true) },
+      { title: 'High mid · 900–5200 Hz',
+        desc: 'Voices and snares — the range the ear is most sensitive to.',
+        params: labCompParams(p => p.bands.highMid, true) },
+      { title: 'Air · above 5200 Hz',
+        desc: 'Cymbals, sibilance and sheen. This band doubles as the de-esser.',
+        params: labCompParams(p => p.bands.air, true) },
+      { title: 'Character EQ',
+        desc: 'Tone shaping after the compressors. LS lifts or cuts everything below its frequency, HS everything above it, and PK is a bell centred on it — Q sets how wide that bell is.',
+        params: eq },
+      { title: 'Colour',
+        desc: 'Saturation adds harmonics to part of the signal, which reads as warmth and density rather than distortion. The exciter generates new top end instead, which is what keeps a bright master sounding close rather than behind glass.',
+        params: [
         { label: 'Saturation', min: 0, max: 1,   step: 0.01, fmt: fmtAmt,
           get: p => p.saturation, set: (p, v) => { p.saturation = v; } },
         { label: 'Exciter',    min: 0, max: 1.5, step: 0.01, fmt: fmtAmt,
           get: p => p.air,        set: (p, v) => { p.air = v; } },
       ] },
-      { title: 'Stereo', params: [
+      { title: 'Stereo',
+        desc: 'Width scales the sides against the centre. Bass mono folds the low end back to the middle, where it stays tight. Side air lifts the top of the sides only — mono-safe by arithmetic, because a mono downmix is the centre.',
+        params: [
         { label: 'Width',     min: 0.5, max: 2, step: 0.01, fmt: fmtX,
           get: p => p.stereoWidth, set: (p, v) => { p.stereoWidth = v; } },
         { label: 'Bass mono', min: 0,   max: 1, step: 0.01, fmt: fmtAmt,
@@ -3079,10 +3771,14 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
         { label: 'Side air',  min: 0,   max: 4, step: 0.05, fmt: fmtDb,
           get: p => p.sideAir,     set: (p, v) => { p.sideAir = v; } },
       ] },
-      { title: 'Glue bus', params: labCompParams(p => p.glue, false) },
+      { title: 'Glue bus',
+        desc: 'One compressor across the whole mix, so the parts move together.',
+        params: labCompParams(p => p.glue, false) },
       // Both of these belong to the style, but only the Loud setting reads them —
       // Streaming and Off carry their own target and ceiling.
-      { title: 'Output · Loud only', params: [
+      { title: 'Output · Loud only',
+        desc: 'How loud the finished master measures, and the highest true peak the file may contain.',
+        params: [
         { label: 'Target',  min: -20, max: -5,   step: 0.1, fmt: fmtLufs,
           get: p => p.targetLufs, set: (p, v) => { p.targetLufs = v; } },
         { label: 'Ceiling', min: -3,  max: -0.1, step: 0.1, fmt: fmtDb,
@@ -3128,12 +3824,19 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
       head.textContent = group.title;
       head.addEventListener('click', () => wrap.classList.toggle('collapsed'));
       wrap.appendChild(head);
+      if (group.desc) {
+        const desc = document.createElement('p');
+        desc.className = 'lab-group-desc';
+        desc.textContent = group.desc;
+        wrap.appendChild(desc);
+      }
 
       for (const param of group.params) {
         const row = document.createElement('div');
         row.className = 'lab-row';
         const label = document.createElement('label');
         label.textContent = param.label;
+        if (param.tip) label.title = param.tip;
         const input = document.createElement('input');
         input.type = 'range';
         input.min = param.log ? 0 : param.min;
@@ -3153,6 +3856,9 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
         input.addEventListener('input', () => {
           param.set(labPreset, labReadSlider(param, input.value));
           labSyncRow(entry, false);
+          // The EQ curve is pure arithmetic on the filters, so it can follow the
+          // finger; the audio and the spectrum arrive when the render does.
+          labDrawEq();
           labScheduleRender();
         });
       }
@@ -3160,6 +3866,222 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     }
     labSyncRows();
   }
+
+
+  // ---------- six controls instead of forty-nine ----------
+  // Nobody sits down wanting to set "low band makeup" — they want more bass. Each
+  // of these owns a small, fixed set of the fields below and rewrites them from
+  // the style's own values, so zero is always exactly the style as it ships and
+  // there is no hidden state that can drift out of sync with the sliders.
+  //
+  // Which EQ bands a control owns is decided once, from the style, when the tab
+  // opens. Deciding it live would mean dragging a bell from 3 kHz down to 200 Hz
+  // silently handed it from Presence to Bass.
+
+  const LAB_MACROS = [
+    {
+      id: 'bass', label: 'Bass',
+      hint: 'Weight under 250 Hz — the sub, and the body of the kick.',
+      prepare: base => base.eq.map((b, i) => (b.freq <= 250 ? i : -1)).filter(i => i >= 0),
+      apply: (p, base, a, eq) => {
+        p.bands.low.makeup = clamp(base.bands.low.makeup * Math.pow(10, a * 3 / 20), 0.3, 3);
+        for (const i of eq) p.eq[i].gain = clamp(base.eq[i].gain + a * 3, -12, 12);
+      },
+    },
+    {
+      id: 'punch', label: 'Punch',
+      hint: 'How much of each kick and snare gets through before the compressors close on it.',
+      prepare: () => null,
+      apply: (p, base, a) => {
+        p.bands.low.attack = clamp(base.bands.low.attack * Math.pow(2, a), 0.0005, 0.1);
+        p.bands.low.release = clamp(base.bands.low.release / Math.pow(2, a * 0.4), 0.02, 0.8);
+        p.bands.low.ratio = clamp(base.bands.low.ratio - a * 0.8, 1, 10);
+        p.glue.attack = clamp(base.glue.attack * Math.pow(2, a * 0.7), 0.0005, 0.1);
+      },
+    },
+    {
+      id: 'presence', label: 'Presence',
+      hint: 'Voices and snares, 900 Hz to 5 kHz — how far forward the mix sits.',
+      prepare: base => base.eq.map((b, i) => (b.freq > 900 && b.freq <= 5200 ? i : -1)).filter(i => i >= 0),
+      apply: (p, base, a, eq) => {
+        p.bands.highMid.makeup = clamp(base.bands.highMid.makeup * Math.pow(10, a * 2.5 / 20), 0.3, 3);
+        for (const i of eq) p.eq[i].gain = clamp(base.eq[i].gain + a * 2.5, -12, 12);
+      },
+    },
+    {
+      id: 'air', label: 'Air',
+      hint: 'Cymbals and sheen, and whether the top end sounds open or closed.',
+      prepare: base => base.eq.map((b, i) => (b.freq > 5200 ? i : -1)).filter(i => i >= 0),
+      apply: (p, base, a, eq) => {
+        p.bands.air.makeup = clamp(base.bands.air.makeup * Math.pow(10, a * 2 / 20), 0.3, 3);
+        p.air = clamp(base.air + a * 0.35, 0, 1.5);
+        for (const i of eq) p.eq[i].gain = clamp(base.eq[i].gain + a * 2.5, -12, 12);
+      },
+    },
+    {
+      id: 'width', label: 'Width',
+      hint: 'How far the sides sit from the centre. The low end stays mono either way.',
+      prepare: () => null,
+      apply: (p, base, a) => {
+        p.stereoWidth = clamp(base.stereoWidth + a * 0.35, 0.5, 2);
+        p.sideAir = clamp(base.sideAir + a * 1.2, 0, 4);
+      },
+    },
+    {
+      id: 'drive', label: 'Drive',
+      hint: 'Harmonic saturation: density and warmth, not level.',
+      prepare: () => null,
+      apply: (p, base, a) => { p.saturation = clamp(base.saturation + a * 0.3, 0, 1); },
+    },
+  ];
+
+  function labSyncMacro(entry) {
+    const v = labMacroValues[entry.macro.id] || 0;
+    entry.input.value = v;
+    entry.val.textContent = v === 0 ? 'style' : (v > 0 ? '+' : '−') + Math.abs(v);
+    entry.wrap.classList.toggle('changed', v !== 0);
+    const pct = (v + 100) / 2;
+    const lo = Math.min(50, pct), hi = Math.max(50, pct);
+    entry.input.style.setProperty('--fill',
+      `linear-gradient(to right,#e3e3e3 0 ${lo}%,#111111 ${lo}% ${hi}%,#e3e3e3 ${hi}% 100%)`);
+  }
+
+  function labSyncMacros() {
+    for (const entry of labMacroRows) labSyncMacro(entry);
+  }
+
+  function labBuildMacros() {
+    labMacros.innerHTML = '';
+    labMacroRows = [];
+    for (const macro of LAB_MACROS) {
+      const prepared = macro.prepare(labBase);
+      const wrap = document.createElement('div');
+      wrap.className = 'lab-macro';
+      const row = document.createElement('div');
+      row.className = 'lab-row';
+      const label = document.createElement('label');
+      label.textContent = macro.label;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = -100; input.max = 100; input.step = 1;
+      const val = document.createElement('span');
+      val.className = 'lab-val';
+      row.appendChild(label); row.appendChild(input); row.appendChild(val);
+      const hint = document.createElement('p');
+      hint.className = 'lab-hint';
+      hint.textContent = macro.hint;
+      wrap.appendChild(row); wrap.appendChild(hint);
+      labMacros.appendChild(wrap);
+
+      const entry = { macro, prepared, wrap, input, val };
+      labMacroRows.push(entry);
+      input.addEventListener('input', () => {
+        // Snapped through the middle, because the style as it ships is the one
+        // position worth being able to find again with a finger.
+        let v = parseInt(input.value, 10);
+        if (Math.abs(v) <= 4) v = 0;
+        labMacroValues[macro.id] = v;
+        macro.apply(labPreset, labBase, v / 100, prepared);
+        labSyncMacro(entry);
+        labSyncRows();
+        labDrawEq();
+        labScheduleRender();
+      });
+      labSyncMacro(entry);
+    }
+  }
+
+  // ---------- keeping the pictures current ----------
+  function labDrawEq() {
+    drawEqCurve(labEqCanvas, labPreset, currentIntensity);
+  }
+
+  function labDrawSpectrum() {
+    drawSpectrum(labSpecCanvas, labDrySpectrum, labWetSpectrum);
+  }
+
+  function labWavePosition() {
+    if (!labGraph || !labDry || !labDry.duration) return null;
+    return labLoopOffset() / labDry.duration;
+  }
+
+  function labDrawWave() {
+    drawWave(labWaveCanvas, labDry, labMastered_, labWavePosition());
+  }
+
+  function labDrawStats() {
+    renderStats(labStatsEl, statsFrom(labStatsData, labDrySpectrum ? labDrySpectrum.lufs : null));
+  }
+
+  function labDrawAll() {
+    labDrawSpectrum();
+    labDrawEq();
+    labDrawWave();
+    labDrawStats();
+  }
+
+  function labTick() {
+    labRaf = 0;
+    if (!labGraph) return;
+    labDrawWave();
+    labRaf = requestAnimationFrame(labTick);
+  }
+
+  function labStartTicking() { if (!labRaf) labRaf = requestAnimationFrame(labTick); }
+  function labStopTicking() { if (labRaf) { cancelAnimationFrame(labRaf); labRaf = 0; } }
+
+  // Tapping the picture is the obvious thing to try, so it does the obvious
+  // thing: play, from there.
+  labWaveCanvas.addEventListener('pointerdown', e => {
+    if (!labDry) return;
+    const rect = labWaveCanvas.getBoundingClientRect();
+    if (!rect.width) return;
+    const pos = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+    labStartLoop(pos * labDry.duration);
+  });
+
+  labAdvToggle.addEventListener('click', () => {
+    const open = labAdv.classList.toggle('open');
+    labAdvToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) labSyncRows();   // the sliders were built while hidden, so lay them out now
+  });
+
+  // ---------- the style screen ----------
+  // Four facts about the track and one picture of it. Without this the first
+  // thing the app ever says about your music is a preselected tile.
+  function drawSourceVisuals() {
+    const d = analysisData;
+    // Drawn twice: once as the filled ghost, once as the line on top. There is
+    // nothing to compare it against here, so the legend is left off.
+    drawSpectrum(sourceSpecCanvas, d ? d.spectrum : null, d ? d.spectrum : null, false);
+    renderStats(sourceStatsEl, d ? [
+      { label: 'Loudness', value: `${d.lufs.toFixed(1)} LUFS` },
+      { label: 'True peak', value: `${d.truePeakDb.toFixed(1)} dBTP` },
+      { label: 'Dynamics', value: `${d.dynamicRange.toFixed(1)} dB` },
+      { label: 'Length', value: formatTime(d.duration) },
+    ] : []);
+    if (!recommended) { recommendNote.textContent = ''; return; }
+    const style = PRESETS.find(p => p.id === recommended.id);
+    recommendNote.textContent = style
+      ? `${style.name} is suggested for this track: ${recommended.why}.`
+      : '';
+  }
+
+  // ---------- the result screen ----------
+  function drawResultVisuals() {
+    drawSpectrum(resultSpecCanvas, analysisData ? analysisData.spectrum : null, masterSpectrum);
+    renderStats(resultStatsEl, statsFrom(masterStats, analysisData ? analysisData.lufs : null));
+  }
+
+  let vizResizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(vizResizeTimer);
+    vizResizeTimer = setTimeout(() => {
+      if (labSection.classList.contains('show')) labDrawAll();
+      if (resultSection.classList.contains('show')) drawResultVisuals();
+      if (presetSection.classList.contains('show')) drawSourceVisuals();
+    }, 140);
+  });
 
   // ---------- opening, leaving, and taking the result with you ----------
 
@@ -3182,10 +4104,28 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     const xfade = Math.round(LAB_XFADE_SEC * sr);
     const want = Math.min(Math.round(LAB_EXCERPT_SEC * sr) + xfade, originalBuffer.length);
     const start = busiestWindow(originalBuffer, want / sr);
+    labExcerptStart = start / sr;
     labExcerpt = makeExcerpt(originalBuffer, start, want);
     labDry = sealLoop(labExcerpt, xfade);
     labExcerptSource = originalBuffer;
     labMastered_ = null;
+    labWetSpectrum = null;
+    labStatsData = null;
+    waveLayer = null;
+
+    // The "before" curve belongs to the excerpt, not to a setting, so it is
+    // measured once and then just redrawn.
+    labDrySpectrum = null;
+    const source = originalBuffer;
+    const chans = copyChannels(labExcerpt);
+    dsp.call('spectrum', { channels: chans, sampleRate: sr }, transferListOf(chans))
+      .then(res => {
+        if (labExcerptSource !== source) return;
+        labDrySpectrum = res;
+        labDrawSpectrum();
+        labDrawStats();
+      })
+      .catch(() => {});
   }
 
   openLabBtn.addEventListener('click', () => {
@@ -3195,6 +4135,7 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     // they were made on is still the selected one.
     if (!labPreset || labPreset.baseId !== labBase.id) labPreset = labClone(labBase);
     labEnsureExcerpt();
+    labBuildMacros();
     labBuildParams();
     stopPlayback(true);
     // A background master of the unedited style is pure competition in here: it
@@ -3203,6 +4144,8 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
     clearTimeout(speculativeTimer);
     showOnly(labSection);
     labSetMode(labMode);
+    labSpecNote.textContent = `original vs. mastered · ${LAB_EXCERPT_SEC}s from ${formatTime(labExcerptStart)}`;
+    labDrawAll();
     labAutoStart = true;
     labRender();
   });
@@ -3215,7 +4158,10 @@ if (typeof importScripts === 'function' && typeof self !== 'undefined') {
 
   labResetBtn.addEventListener('click', () => {
     labPreset = labClone(labBase);
+    labMacroValues = {};
+    labSyncMacros();
     labSyncRows();
+    labDrawEq();
     labScheduleRender();
   });
 
