@@ -1,0 +1,19 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Two waveforms splitting apart: the app in one glyph. -->
+    <path android:fillColor="#FFFFFF" android:pathData="M30,34h4v14h-4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M38,28h4v26h-4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M46,22h4v38h-4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M54,30h4v22h-4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M62,25h4v32h-4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M70,33h4v16h-4z" />
+    <path android:fillColor="#7BE3C3" android:pathData="M30,66h4v8h-4z" />
+    <path android:fillColor="#7BE3C3" android:pathData="M38,62h4v16h-4z" />
+    <path android:fillColor="#7BE3C3" android:pathData="M46,58h4v24h-4z" />
+    <path android:fillColor="#7BE3C3" android:pathData="M54,64h4v12h-4z" />
+    <path android:fillColor="#7BE3C3" android:pathData="M62,60h4v20h-4z" />
+    <path android:fillColor="#7BE3C3" android:pathData="M70,65h4v10h-4z" />
+</vector>

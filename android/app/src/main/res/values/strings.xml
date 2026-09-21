@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Signal Isolate</string>
+    <string name="channel_name">Separation</string>
+    <string name="channel_description">Shows progress while a track is being separated.</string>
+</resources>
