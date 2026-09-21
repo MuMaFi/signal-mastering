@@ -23,7 +23,15 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - uses: android-actions/setup-android@v3
+      # ubuntu-latest already ships the Android SDK; android-actions/setup-android@v3
+      # still asks for the long-removed "tools" package and fails the job, so the
+      # needed packages are installed straight from the runner's own sdkmanager.
+      - name: Install Android SDK packages
+        run: |
+          set -eu
+          sdkmanager=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
 
       - uses: gradle/actions/setup-gradle@v4
 
