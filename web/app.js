@@ -15,44 +15,46 @@ const SAMPLE_RATE = 44100;
 
 // Names, copy and sizes are ModelCatalog.kt's, word for word.
 const MODELS = [
+  // Mirrors android/.../model/ModelCatalog.kt. rtf is seconds of work per second of
+  // audio as measured on the desktop harness; a phone is several times slower.
   {
     id: "roformer",
     name: "Mel-Band RoFormer",
     subtitle: "Maximum quality · SYHFT / Kim Vocal lineage",
     bytes: 741_190_540,
-    rtf: 1.8,
+    rtf: 1.22,
     window: 242_550,          // 5.5 s chunks, as RoformerEngine.FRAMES
     stride: 4 * SAMPLE_RATE,
     stems: ["vocals", "instrumental"],
     minRamGb: 6,
-    note: "Best separation available offline. Clean sibilance, very little instrumental bleed. " +
-      "~2x real time — a 4-minute song takes about 7 minutes.",
+    note: "Best vocals and instrumental. Clean sibilance, very little bleed. " +
+      "Slowest: about 7× longer than SCNet.",
   },
   {
-    id: "demucs-ft",
-    name: "HT-Demucs FT (vocals)",
-    subtitle: "Faster · fine-tuned vocals specialist",
-    bytes: 165_612_636,
-    rtf: 0.41,
-    window: 343_980,
-    stride: 343_980 - 343_980 / 4,
-    stems: ["vocals", "instrumental"],
-    minRamGb: 4,
-    note: "Very good vocal isolation; slightly more instrumental bleed than RoFormer. " +
-      "~0.5x real time — a 4-minute song takes about 2 minutes.",
+    id: "scnet",
+    name: "SCNet",
+    subtitle: "Fast · vocals, instrumental or four stems",
+    bytes: 48_177_654,
+    rtf: 0.16,
+    window: 485_100,          // 11 s chunks, as ScnetEngine.WINDOW
+    stride: 485_100 - 485_100 / 4,
+    stems: ["vocals", "instrumental", "drums", "bass", "other"],
+    minRamGb: 3,
+    note: "Better vocals than HT-Demucs in a fraction of the time. Also splits drums, bass and other. " +
+      "Fastest: about 7× quicker than RoFormer.",
   },
   {
     id: "demucs-4",
     name: "HT-Demucs (4 stems)",
-    subtitle: "Drums · bass · other · vocals",
+    subtitle: "Four stems · strongest on bass and drums",
     bytes: 165_612_636,
-    rtf: 0.41,
+    rtf: 0.37,
     window: 343_980,
     stride: 343_980 - 343_980 / 4,
     stems: ["vocals", "instrumental", "drums", "bass", "other"],
     minRamGb: 4,
-    note: "Full band split when you want more than vocals and backing track. " +
-      "~0.5x real time — a 4-minute song takes about 2 minutes.",
+    note: "The best bass and drums of the three, when you want the whole band split. " +
+      "About twice as long as SCNet.",
   },
 ];
 

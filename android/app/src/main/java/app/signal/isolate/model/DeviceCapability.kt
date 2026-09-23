@@ -66,7 +66,7 @@ object DeviceCapability {
     fun headroomProblem(context: Context, spec: ModelSpec): String? {
         val info = memoryInfo(context) ?: return null
         val needed = (spec.peakMemoryMb + APP_OVERHEAD_MB) * 1_048_576L
-        val usable = info.availMem - info.threshold
+        val usable = usableBytes(info)
         if (usable >= needed) return null
         return "Not enough free memory to start ${spec.displayName}: it needs about " +
             "${gb(needed)}, and ${gb(usable.coerceAtLeast(0))} is free right now. " +
@@ -77,6 +77,18 @@ object DeviceCapability {
                 "."
             }
     }
+
+    /**
+     * Whether [spec]'s faster, hungrier graph-optimised setting fits right now, by the
+     * same rule as [headroomProblem]. When it does not, the model still runs, lean.
+     */
+    fun roomForOptimizer(context: Context, spec: ModelSpec): Boolean {
+        val peak = spec.optimizedPeakMemoryMb ?: return false
+        val info = memoryInfo(context) ?: return false
+        return usableBytes(info) >= (peak + APP_OVERHEAD_MB) * 1_048_576L
+    }
+
+    private fun usableBytes(info: ActivityManager.MemoryInfo) = info.availMem - info.threshold
 
     /** Android's own verdict that memory is running out; checked between chunks. */
     fun underPressure(context: Context): Boolean = memoryInfo(context)?.lowMemory == true

@@ -45,6 +45,22 @@ class ModelManager(private val context: Context) {
     }
 
     /**
+     * Deletes downloads of models the catalogue no longer offers. 1.0.2 dropped the
+     * fine-tuned Demucs vocals model; anyone who had fetched it would otherwise carry
+     * 166 MB they can no longer select, see or remove.
+     */
+    fun pruneRetired(): Long {
+        val root = File(context.filesDir, "models")
+        val current = ModelCatalog.all.map { it.id }.toSet()
+        var freed = 0L
+        root.listFiles()?.filter { it.isDirectory && it.name !in current }?.forEach { dir ->
+            freed += dir.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+            dir.deleteRecursively()
+        }
+        return freed
+    }
+
+    /**
      * Makes sure every file of [spec] is present and verified.
      * [onProgress] receives bytes completed and the total for the whole model.
      */

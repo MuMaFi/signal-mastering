@@ -19,14 +19,48 @@ most of the top ten: they are either service-only, or they ship as PyTorch `.ckp
 files that need the training repo and a GPU to run.
 
 **What is state of the art *and* runnable offline on ARM.** Filtering the leaderboard
-down to checkpoints with a working ONNX export leaves a clear winner and a clear
-fallback, and those are what the app ships:
+down to checkpoints with a working ONNX export — or one that could be made to work —
+leaves three that earn a place, and those are what the app ships:
 
-| | Model | Download | Quality | Measured speed |
-| --- | --- | --- | --- | --- |
-| **Maximum** | [Mel-Band RoFormer (SYHFT / "Kim Vocal" lineage)](https://huggingface.co/silverdaw/mel-band-roformer-vocals-onnx) | 741 MB | Best offline separation there is. Clean sibilance, very little instrumental bleed. | RTF 2.1 |
-| **Faster** | [HT-Demucs FT, vocals specialist](https://huggingface.co/StemSplitio/htdemucs-ft-onnx) | 166 MB | 9.19 dB median vocals SDR on MUSDB18-HQ | RTF 0.47 |
-| **Four stems** | [HT-Demucs](https://huggingface.co/StemSplitio/htdemucs-onnx) | 166 MB | Drums / bass / other / vocals in one pass | RTF 0.47 |
+| | Model | Download | Vocals SDR | Speed (RTF) | Memory |
+| --- | --- | ---: | ---: | ---: | ---: |
+| **Maximum** | [Mel-Band RoFormer (SYHFT / "Kim Vocal" lineage)](https://huggingface.co/silverdaw/mel-band-roformer-vocals-onnx) | 741 MB | **11.08 dB** | 1.27 | 3.0 GB |
+| **Fast** | [SCNet Small](https://github.com/starrytong/SCNet), exported here | 48 MB | 9.75 dB | **0.19** | **0.6 GB** |
+| **Four stems** | [HT-Demucs](https://huggingface.co/StemSplitio/htdemucs-onnx) | 166 MB | 8.78 dB | 0.37 | 1.1 GB |
+
+SDR is the median over the 50 MUSDB18 test excerpts, measured through the app's own
+pipeline by [`tools/verify/musdb_eval.py`](tools/verify/musdb_eval.py). RTF is seconds
+of work per second of audio on the development machine — a phone is several times
+slower, but the ratios hold. Memory is measured as described [below](#what-to-expect-on-a-phone).
+When the phone cannot spare 3 GB, the RoFormer runs lean instead: RTF 1.84 at 1.8 GB.
+
+SCNet and HT-Demucs both split drums, bass and other as well:
+
+| | vocals | instrumental | drums | bass | other |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| SCNet Small | **9.75** | **13.91** | 9.27 | 8.04 | **6.00** |
+| HT-Demucs | 8.78 | 13.35 | **9.51** | **9.03** | 5.21 |
+
+So SCNet is the fast choice for vocals and the band minus vocals, and HT-Demucs stays
+for when the bass and drums matter.
+
+**What was tried and left out:**
+
+- *HT-Demucs FT, vocals specialist* shipped in 1.0.x as the middle option. Measured
+  on MUSDB it lands within 0.3 dB of plain HT-Demucs (median 8.52 vs 8.78 dB) at the
+  same cost — and SCNet beats both in half the time. 1.0.2 removes it and deletes
+  its download.
+- *SCNet XL IHF* is the strongest SCNet (11.32 dB vocals) and exports the same way, but
+  it is no faster than the optimised RoFormer and worse on the instrumental (15.86 vs 16.31 dB).
+- *BS-RoFormer* ([ep 317, reported 12.97 dB](https://github.com/ZFTurbo/Music-Source-Separation-Training)):
+  the fp32 export does not load with its external weights, and the 8-bit one needs
+  9.9 GB.
+
+SCNet had no usable export anywhere — the one on Hugging Face runs but separates
+nothing, because SCNet's STFT has a rectangular window that only its code mentions. The
+app's export is made by [`tools/onnx/export_scnet.py`](tools/onnx/export_scnet.py),
+checked against the PyTorch model step by step, and served from this repository's
+[`models/`](../models) directory.
 
 All three are MIT-licensed. The app downloads the weights once, pins each file to a
 SHA-256 baked into [`ModelCatalog.kt`](app/src/main/java/app/signal/isolate/model/ModelCatalog.kt),
@@ -37,8 +71,8 @@ checkpoints, but none with an ONNX export — they are PyTorch-only, so they can
 here. The app does what the reference desktop host does instead: it takes the vocal
 stem from the model and reconstructs the instrumental as the residual `mix − vocals`.
 That is not a compromise for this use case — it means the two stems sum back to the
-original mix *exactly*, with no phase or level drift. For HT-Demucs in four-stem mode
-the instrumental is `drums + bass + other`, the model's own decomposition.
+original mix *exactly*, with no phase or level drift. For SCNet and HT-Demucs the
+instrumental is `drums + bass + other`, the models' own decomposition.
 
 <br>
 
@@ -64,9 +98,8 @@ and freeing as it goes. Same weights, same arithmetic, different schedule:
 ulps of fp16.
 
 A dynamic time axis also means the chunk no longer has to be 11 s, and the attention
-working set shrinks with it. Together with the graph optimiser switched off (see
-[what went wrong in 1.0.0](#100-froze-phones--what-happened)) — which also leaves the
-weights memory-mapped from disk — the app now runs 5.5 s chunks:
+working set shrinks with it. With the graph optimiser off (see
+[what went wrong in 1.0.0](#100-froze-phones--what-happened)):
 
 | RoFormer, optimiser off | Peak RSS | RTF |
 | --- | ---: | ---: |
@@ -74,8 +107,16 @@ weights memory-mapped from disk — the app now runs 5.5 s chunks:
 | **5.5 s chunks (what the app runs)** | **1.77 GB** | **1.80** |
 
 Shorter context could cost separation quality, so it is checked against ground truth
-rather than assumed: [`tools/verify/musdb_eval.py`](tools/verify/musdb_eval.py) runs
-both chunk lengths through the app's pipeline on the MUSDB18 test split.
+rather than assumed: on the MUSDB18 test split both chunk lengths score 11.08 dB median
+vocals. The step between chunks was checked the same way — a 5 s step instead of 4 s
+would be 20 % faster, but cost 0.15 dB on the median track and 2.2 dB on the worst, so
+the app keeps 4 s.
+
+**The optimiser, when there is room.** On this graph ONNX Runtime's optimiser costs
+1.2 GB, held for the whole run, and makes every chunk 31 % faster. So the app checks
+free memory right before it loads the model: with about 3.3 GB to spare it runs
+optimised, otherwise lean, as 1.0.1 did. The output is the same either way — 2.8e-7 from
+the reference.
 
 [`tools/onnx/make_dynamic_time.py`](tools/onnx/make_dynamic_time.py) performs the
 rewrite and documents exactly what it touches: 17 `Reshape` shape constants, and the
@@ -95,11 +136,12 @@ audio file ──▶ MediaCodec ──▶ Kaiser-sinc resample ──▶ interle
                                        ▼
                               one window at a time
                                        │
-              ┌────────────────────────┴───────────────────────┐
-              ▼                                                ▼
-     RoFormer (host STFT)                              HT-Demucs (waveform)
-     STFT → ONNX mask → iSTFT                          ONNX → 4 stems
-              └────────────────────────┬───────────────────────┘
+         ┌─────────────────────────────┼─────────────────────────────┐
+         ▼                             ▼                             ▼
+  RoFormer (host STFT)          SCNet (host STFT)           HT-Demucs (waveform)
+  Hann, 2048 / 441              rectangular, 4096 / 1024     ONNX → 4 stems
+  STFT → ONNX mask → iSTFT      STFT → ONNX → 4 × iSTFT
+         └─────────────────────────────┬─────────────────────────────┘
                                        ▼
                        trapezoid overlap-add, streamed
                                        ▼
@@ -120,19 +162,25 @@ Hann, centred reflect padding, packed into `[1, 2050, 1101, 2]` indexed `2·freq
 channel`. Get any of that wrong and the model still runs and still produces audio — it
 is just quietly worse. Hence the verification harness below.
 
+SCNet's export is built the same way, and is the proof of that warning: fed a Hann
+window, as any STFT defaults to, it still produces audio — at 1 dB SDR. Its checkpoint
+was trained on a rectangular window (`n_fft = 4096`, `hop = 1024`, normalised), and with
+that it scores 9.75 dB.
+
 **The overlap window is a trapezoid, not a Hamming.** Its ramps are exactly as long as
 the chunk overlap, so consecutive windows sum to 1 and the middle of every chunk comes
 through exactly as the model produced it, with no cross-fade smearing. The running
 weight division handles the first and last chunk.
 
-**Resampling is a windowed sinc, not linear.** Both models are 44.1 kHz-only, and a
+**Resampling is a windowed sinc, not linear.** All three models are 44.1 kHz-only, and a
 cheap resample smears exactly the high-frequency detail that separation quality is
 judged on. 32 taps, 1024 phases, Kaiser β = 8.6.
 
-**Runtime options are swept, not guessed.** `RuntimeTuning` is a parameter the harness
-can sweep (`--tune=pattern,arena,threads`). The sweep did not produce a reliable reason
-to move off ONNX Runtime's own defaults, so the app keeps them — see the comment on that
-type for the table, including the numbers that refused to repeat cleanly.
+**Runtime options are measured, not guessed.** `RuntimeTuning` is a parameter the
+harness can sweep (`--tune=opt,pattern,arena,threads`, `--repeat=N` for consecutive
+chunks). The memory-pattern planner is off, because it grows the RoFormer by 1 GB at
+the second chunk; the graph optimiser is decided per model and per run, as above. The
+comment on that type has the table.
 
 <br>
 
@@ -149,13 +197,14 @@ Overlap-add constant over 1 543 500 frames    6.0e-08
 Resampler 48k -> 44.1k                        1.3e-04
 Packed STFT tensor vs NumPy                   2.0e-07 relative
 
-roformer vocals vs reference                  6.1e-07 max abs
-roformer instrumental vs reference            6.1e-07 max abs
+roformer vocals vs reference                  2.8e-07 max abs   (optimiser on)
+roformer instrumental vs reference            2.8e-07 max abs
+scnet drums/bass/other/vocals/instrumental    7.2e-07 max abs
 demucs drums/bass/other/vocals/instrumental   0.0     (bit-exact)
 ```
 
-HT-Demucs matches the reference bit for bit. The RoFormer residual is float32 rounding
-between this FFT and NumPy's `rfft`. See [tools/verify/README.md](tools/verify/README.md).
+HT-Demucs matches the reference bit for bit. The RoFormer and SCNet residuals are
+float32 rounding between this FFT and NumPy's `rfft`. See [tools/verify/README.md](tools/verify/README.md).
 
 <br>
 
@@ -196,36 +245,42 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 ./gradlew :app:assembleDebug
 ```
 
-APKs land in `app/build/outputs/apk/debug/`. The build splits by ABI:
+APKs land in `app/build/outputs/apk/`. The build splits by ABI; release sizes:
 
 | APK | Size |
 | --- | --- |
-| `app-arm64-v8a-debug.apk` | 45 MB — this is the one for a phone |
-| `app-x86_64-debug.apk` | 51 MB — emulators |
-| `app-universal-debug.apk` | 84 MB — both |
+| `app-arm64-v8a-release.apk` | 14 MB — this is the one for a phone |
+| `app-x86_64-release.apk` | 16 MB — emulators |
+| `app-universal-release.apk` | 29 MB — both |
 
-Most of that is ONNX Runtime's native library. The model weights are *not* in the APK;
-the app fetches them on first use.
+Most of that is ONNX Runtime's native library, kept compressed inside the APK
+(`useLegacyPackaging`) and unpacked by Android on install. The model weights are *not*
+in the APK; the app fetches them on first use.
 
-`assembleRelease` is minified and currently debug-signed so CI produces something
-installable — swap in a real keystore before distributing.
+Both build types are signed with a test key committed in [`app/signing/`](app/signing), so
+every build installs as an update over the last one. Swap in a real key before
+distributing through a store.
 
 <br>
 
 ## What to expect on a phone
 
 Peak memory is the number that decides whether this works at all, so it is measured
-from the kernel's own high-water mark (VmHWM) across several consecutive chunks — the
-steady state of a real song, not a single run — four threads as on an 8-core phone:
+from the kernel's own high-water mark (VmHWM), through the same Java API the app uses,
+across four consecutive chunks — the steady state of a real song, not a single run —
+with four threads as on an 8-core phone:
 
-| | Peak RSS | RTF | A 4-minute song |
+| | Peak memory | RTF | Relative time |
 | --- | ---: | ---: | --- |
-| Mel-Band RoFormer | 1.81 GB | 1.8 | ~7 minutes |
-| HT-Demucs | 1.11 GB | 0.35 | ~2 minutes |
+| Mel-Band RoFormer, optimised | 2.99 GB | 1.27 | 7× SCNet |
+| Mel-Band RoFormer, lean | 1.76 GB | 1.84 | 10× SCNet |
+| HT-Demucs | 1.11 GB | 0.37 | 2× SCNet |
+| SCNet Small | 0.64 GB | 0.19 | — |
 
-RTF is from an uncontended run on the development machine's x86 CPU, not from a phone;
-treat the times as an order of magnitude. Run it plugged in — it is minutes of full
-load — and leave the app if you like: the work runs in a foreground service.
+RTF is from the development machine's x86 CPU, not a phone. On an Honor Magic 4 Pro
+the RoFormer took about half an hour for a song in 1.0.1 — the lean row. Optimised it
+is about a third quicker; SCNet does the same song in a few minutes. Run long jobs
+plugged in, and leave the app if you like: the work runs in a foreground service.
 
 Before it downloads anything, and again right before it loads the model, the app
 compares each model's measured peak against the memory Android reports as free *now*,
@@ -268,6 +323,9 @@ a note behind and tells you, on the next launch, which stage the run died in.
   reference implementation [lucidrains/BS-RoFormer](https://github.com/lucidrains/BS-RoFormer) (MIT).
   Weights © Kimberley Jensen / SYH99999. ONNX export © musetric, re-hosted by
   [Silverdaw](https://github.com/irarainey/silverdaw).
+- **SCNet** — Tong et al., [arXiv:2401.13276](https://arxiv.org/abs/2401.13276);
+  [starrytong/SCNet](https://github.com/starrytong/SCNet) (MIT). Checkpoint via
+  [ZFTurbo/Music-Source-Separation-Training](https://github.com/ZFTurbo/Music-Source-Separation-Training) (MIT).
 - **HT-Demucs** — [facebookresearch/demucs](https://github.com/facebookresearch/demucs) (MIT),
   ONNX exports by [StemSplitio](https://huggingface.co/StemSplitio).
 - **ONNX Runtime** — Microsoft (MIT).

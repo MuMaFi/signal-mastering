@@ -36,10 +36,22 @@ data class ModelSpec(
     val speedHint: String,
     val minRamGb: Int,
     /**
-     * Measured peak resident memory of one inference, in MB (kernel VmHWM, optimiser
-     * off). The headroom check in [DeviceCapability] refuses to start without it free.
+     * Measured peak resident memory over consecutive chunks, in MiB: the kernel's
+     * VmHWM through the Java API the app uses, above the process's own baseline,
+     * optimiser off. The headroom check in [DeviceCapability] refuses to start without
+     * it free.
      */
     val peakMemoryMb: Long,
+    /**
+     * The same peak with ONNX Runtime's graph optimiser on, for a model where that was
+     * measured to pay off; `null` where it does not. The optimiser is used only when
+     * this much is free — otherwise the model runs lean at [peakMemoryMb].
+     *
+     * Chosen per model because the same switch helps one and cripples another: it makes
+     * the RoFormer 31 % faster for 1.2 GB, while on HT-Demucs its constant folding peaks
+     * at 6.3 GB for 8 %, and on SCNet it buys nothing for 2.4× the memory.
+     */
+    val optimizedPeakMemoryMb: Long? = null,
     val license: String,
     val source: String,
 ) {
@@ -57,8 +69,11 @@ data class ModelSpec(
  */
 object ModelCatalog {
 
-    /** Steady state at RoformerEngine.FRAMES (5.5 s chunks): 1.81 GB VmHWM over consecutive chunks. */
+    /** Steady state at RoformerEngine.FRAMES (5.5 s chunks): 1.76 GB over consecutive chunks. */
     private const val ROFORMER_PEAK_MB = 1_850L
+
+    /** The same with the graph optimiser on: 2.99 GB, flat from chunk to chunk. */
+    private const val ROFORMER_OPTIMIZED_PEAK_MB = 3_000L
 
     /**
      * Mel-Band RoFormer, SYHFT / "Kim Vocal" lineage — the strongest open vocal
@@ -82,47 +97,56 @@ object ModelCatalog {
             ),
         ),
         stems = listOf(Stem.VOCALS, Stem.INSTRUMENTAL),
-        quality = "Best separation available offline. Clean sibilance, very little instrumental bleed.",
-        // RTF 1.8 at 5.5 s chunks, optimiser off (uncontended x86 run, not a phone).
-        speedHint = "~2x real time — a 4-minute song takes about 7 minutes.",
+        quality = "Best vocals and instrumental. Clean sibilance, very little bleed.",
+        speedHint = "Slowest: about 7× longer than SCNet.",
         minRamGb = 6,
         peakMemoryMb = ROFORMER_PEAK_MB,
+        // 31 % faster for 1.2 GB, when the phone has it to spare.
+        optimizedPeakMemoryMb = ROFORMER_OPTIMIZED_PEAK_MB,
         license = "MIT",
         source = "https://huggingface.co/silverdaw/mel-band-roformer-vocals-onnx",
     )
 
     /**
-     * The vocals specialist out of the HT-Demucs fine-tuned bag (median vocals SDR
-     * 9.19 dB on MUSDB18-HQ). A quarter of the download, a fraction of the RAM.
+     * SCNet Small, exported from starrytong's MUSDB18 checkpoint by
+     * tools/onnx/export_scnet.py and served from this repository (models/), because no
+     * working export is hosted anywhere else.
+     *
+     * On the MUSDB18 test excerpts it beats HT-Demucs on vocals (9.75 vs 8.78 dB) and
+     * "other", loses on bass (8.04 vs 9.03) and roughly ties on drums — at 2.3× the speed
+     * and half the memory. It replaced the fine-tuned Demucs vocals model, which measured
+     * within 0.3 dB of plain HT-Demucs and so added nothing.
      */
-    val DEMUCS_FT_VOCALS = ModelSpec(
-        id = "htdemucs_ft_vocals",
-        displayName = "HT-Demucs FT (vocals)",
-        subtitle = "Faster · fine-tuned vocals specialist",
-        engine = EngineKind.DEMUCS,
-        entryFile = "htdemucs_ft_vocals_fp16weights.onnx",
+    val SCNET_SMALL = ModelSpec(
+        id = "scnet_small",
+        displayName = "SCNet",
+        subtitle = "Fast · vocals, instrumental or four stems",
+        engine = EngineKind.SCNET,
+        entryFile = "scnet_small.onnx",
         files = listOf(
             ModelFile(
-                name = "htdemucs_ft_vocals_fp16weights.onnx",
-                url = "https://huggingface.co/StemSplitio/htdemucs-ft-onnx/resolve/main/htdemucs_ft_vocals_fp16weights.onnx",
-                bytes = 165_612_636L,
-                sha256 = "0cbe651f535415c9d26a7bb614f7d322dd5a080fa0298f2e50f478030a994dce",
+                name = "scnet_small.onnx",
+                // Pinned to the commit that added it; the hash is checked either way.
+                url = "https://raw.githubusercontent.com/MuMaFi/signal-mastering/" +
+                    "9a228e6cdb4e773fb2a10a3d00a48abbc64a0494/models/scnet_small.onnx",
+                bytes = 48_177_654L,
+                sha256 = "2f055ae5bb5e2bb3a38adba56e11c8c8723563a2c0a2b6db314dec1eb038c995",
             ),
         ),
-        stems = listOf(Stem.VOCALS, Stem.INSTRUMENTAL),
-        quality = "Very good vocal isolation; slightly more instrumental bleed than RoFormer.",
-        speedHint = "~0.5x real time — a 4-minute song takes about 2 minutes.",
-        minRamGb = 4,
-        peakMemoryMb = 1_150,
+        stems = listOf(Stem.VOCALS, Stem.INSTRUMENTAL, Stem.DRUMS, Stem.BASS, Stem.OTHER),
+        quality = "Better vocals than HT-Demucs in a fraction of the time. Also splits drums, bass and other.",
+        speedHint = "Fastest: about 7× quicker than RoFormer.",
+        minRamGb = 3,
+        peakMemoryMb = 650,
         license = "MIT",
-        source = "https://huggingface.co/StemSplitio/htdemucs-ft-onnx",
+        source = "https://github.com/starrytong/SCNet",
     )
 
     /** Standard HT-Demucs: one session, all four stems. */
     val DEMUCS_4STEM = ModelSpec(
         id = "htdemucs_4stem",
         displayName = "HT-Demucs (4 stems)",
-        subtitle = "Drums · bass · other · vocals",
+        subtitle = "Four stems · strongest on bass and drums",
         engine = EngineKind.DEMUCS,
         entryFile = "htdemucs_fp16weights.onnx",
         files = listOf(
@@ -134,15 +158,15 @@ object ModelCatalog {
             ),
         ),
         stems = listOf(Stem.VOCALS, Stem.INSTRUMENTAL, Stem.DRUMS, Stem.BASS, Stem.OTHER),
-        quality = "Full band split when you want more than vocals and backing track.",
-        speedHint = "~0.5x real time — a 4-minute song takes about 2 minutes.",
+        quality = "The best bass and drums of the three, when you want the whole band split.",
+        speedHint = "About twice as long as SCNet.",
         minRamGb = 4,
         peakMemoryMb = 1_150,
         license = "MIT",
         source = "https://huggingface.co/StemSplitio/htdemucs-onnx",
     )
 
-    val all = listOf(ROFORMER, DEMUCS_FT_VOCALS, DEMUCS_4STEM)
+    val all = listOf(ROFORMER, SCNET_SMALL, DEMUCS_4STEM)
 
     fun byId(id: String): ModelSpec = all.firstOrNull { it.id == id } ?: ROFORMER
 }

@@ -13,11 +13,12 @@ fixtures produced by a NumPy reference.
 ```bash
 pip install numpy onnxruntime
 
-# 1. Fetch the weights once (≈ 900 MB), plus the app's rewritten RoFormer graph.
+# 1. Fetch the weights once (≈ 950 MB), plus the app's rewritten RoFormer graph.
 mkdir -p models && cd models
 curl -LO https://huggingface.co/silverdaw/mel-band-roformer-vocals-onnx/resolve/main/syhft_core_folded_fp16_webgpu.onnx
 curl -LO https://huggingface.co/silverdaw/mel-band-roformer-vocals-onnx/resolve/main/syhft_core_folded_fp16_webgpu.onnx.data
 curl -LO https://huggingface.co/StemSplitio/htdemucs-onnx/resolve/main/htdemucs_fp16weights.onnx
+cp ../../../../models/scnet_small.onnx .
 cp ../../../app/src/main/assets/roformer_core_dyn_time.onnx .
 cd ..
 
@@ -28,10 +29,12 @@ mkdir -p data && python3 reference.py data models
 cd ../.. && ./gradlew :tools:verify:run --args="tools/verify/data tools/verify/models"
 
 #    One model at a time, so peak RSS is not polluted by the previous session:
-#      --only=roformer | --only=demucs
-#    Re-measure the ONNX Runtime knobs:
-#      --tune=opt,memoryPattern,arena[,threads]   e.g. --tune=none,true,true,4
-#      opt: none | basic | extended | all   (the app runs none)
+#      --only=roformer | --only=scnet | --only=demucs
+#    Consecutive chunks, so the peak covers the steady state of a song:
+#      --repeat=4
+#    Re-measure the ONNX Runtime knobs (default: what a phone with room runs):
+#      --tune=opt,memoryPattern,arena[,threads]   e.g. --tune=none,false,true,4
+#      opt: none | basic | extended | all
 
 # 4. Diff the two.
 cd tools/verify && python3 compare.py data
@@ -63,6 +66,7 @@ python3 musdb_eval.py musdb models
 | Resampler: a 1 kHz tone stays a 1 kHz tone through 48 k → 44.1 k | 5e-3 |
 | Packed STFT tensor vs NumPy, element for element | 1e-5 relative |
 | Mel-Band RoFormer vocals and instrumental vs the NumPy pipeline | 5e-6 absolute |
+| SCNet Small: all four stems, plus the summed instrumental | 5e-6 absolute |
 | HT-Demucs: all four stems, plus the summed instrumental | 5e-6 absolute |
 
 Note that `reference.py` prefers `roformer_core_dyn_time.onnx` if it is in the models
@@ -76,15 +80,26 @@ FFT peak bin 7, round-trip 3.6e-07
 STFT round-trip 1.8e-07, frames 1101
 Overlap-add constant error 6.0e-08 over 1 543 500 frames
 Resampler 48k -> 44.1k error 1.3e-04
-Packed STFT vs NumPy 2.0e-07 relative
 
-roformer vocals        max abs diff 6.1e-07     RTF 2.1   peak RSS 4.11 GB
-roformer instrumental  max abs diff 6.1e-07
+roformer vocals        max abs diff 2.8e-07     optimiser on
+roformer instrumental  max abs diff 2.8e-07
+scnet drums/bass/other/vocals/instrumental
+                       max abs diff 7.2e-07
 demucs drums/bass/other/vocals/instrumental
-                       max abs diff 0.0         RTF 0.47  peak RSS 6.51 GB
+                       max abs diff 0.0
+```
+
+Memory and speed, `--repeat=4 --tune=<opt>,false,true,4`: VmHWM above the JVM's own
+baseline, RTF averaged over runs 2–4.
+
+```
+                       optimiser off            optimiser on
+roformer (5.5 s)       +1.76 GB   RTF 1.84      +2.99 GB   RTF 1.27   <- app, if free
+scnet    (11 s)        +0.64 GB   RTF 0.19      +1.53 GB   RTF 0.20
+demucs   (7.8 s)       +1.11 GB   RTF 0.37      +6.34 GB   RTF 0.34
 ```
 
 HT-Demucs needs no host transform, so it matches the reference bit for bit. The RoFormer
-residual is float32 rounding between this FFT and NumPy's `rfft` — and it holds with the
-rewritten dynamic-time graph, which is the point: the rewrite changes the schedule, not
-the arithmetic.
+and SCNet residuals are float32 rounding between this FFT and NumPy's `rfft` — and the
+RoFormer's holds with the rewritten dynamic-time graph and with the optimiser on, which
+is the point: neither changes the arithmetic that matters.

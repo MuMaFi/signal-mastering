@@ -8,6 +8,7 @@ import app.signal.isolate.audio.PcmFile
 import app.signal.isolate.audio.WavConverter
 import app.signal.isolate.audio.WavWriter
 import app.signal.isolate.engine.EngineFactory
+import app.signal.isolate.engine.RuntimeTuning
 import app.signal.isolate.model.DeviceCapability
 import app.signal.isolate.model.ModelCatalog
 import app.signal.isolate.model.ModelManager
@@ -75,6 +76,10 @@ class SeparationPipeline(private val context: Context) {
                 spec = spec,
                 modelFile = models.entryPath(spec),
                 requested = requested,
+                tuning = RuntimeTuning.forModel(
+                    spec,
+                    roomForOptimizer = DeviceCapability.roomForOptimizer(context, spec),
+                ),
             )
 
             val stems = engine.producedStems

@@ -35,18 +35,22 @@ class EngineException(message: String, cause: Throwable? = null) : Exception(mes
  * (`--tune=opt,pattern,arena,threads`) rather than leaving them as constants someone
  * reasoned their way to.
  *
- * Two of them are off, both for memory, both measured as the kernel's high-water mark
- * (VmHWM) over several consecutive chunks — because that is what a song is:
+ * Two of them are off by default, both for memory. Memory here is the kernel's
+ * high-water mark (VmHWM) above the process's own, over four consecutive chunks —
+ * because that is what a song is — through this Java API, four threads:
  *
  * ```
- *                        optimiser on   pattern on    both off (the defaults)
- *   HT-Demucs            6.60 GB        1.93 GB       1.11 GB    same speed
- *   RoFormer, 5.5 s        —            2.86 GB       1.81 GB    same speed
+ *                        optimiser on                optimiser off
+ *   Mel-Band RoFormer    +2.99 GB, 31 % faster       +1.76 GB
+ *   HT-Demucs            +6.34 GB,  8 % faster       +1.11 GB
+ *   SCNet Small          +1.53 GB,  no faster        +0.64 GB
  * ```
  *
- * - [optimization]: the graph optimiser constant-folds while it builds the session, and
- *   on HT-Demucs that alone peaked at 6.6 GB before a sample was processed. It is what
- *   froze a phone in 1.0.0. With it off the RoFormer weights also stay memory-mapped.
+ * - [optimization]: off unless the model has a ModelSpec.optimizedPeakMemoryMb and that
+ *   much is free when the run starts. The graph optimiser constant-folds while it builds
+ *   the session, and on HT-Demucs that alone peaks past 6 GB before a sample is
+ *   processed — it is what froze a phone in 1.0.0. On the RoFormer the same switch costs
+ *   1.2 GB and buys 31 %, so it is worth having whenever the phone can spare it.
  * - [memoryPattern]: the planner records the first run's allocations and pre-allocates
  *   that plan as one block from the second run on. For the RoFormer the jump is 1.78 →
  *   2.85 GB at chunk two, then flat — invisible to any single-run measurement, which is
@@ -57,7 +61,21 @@ data class RuntimeTuning(
     val memoryPattern: Boolean = false,
     val arena: Boolean = true,
     val threads: Int = EngineFactory.defaultThreads(),
-)
+) {
+    companion object {
+        /**
+         * The defaults above, with the graph optimiser on only where [spec] was measured
+         * to gain from it *and* the caller found room for its higher peak.
+         */
+        fun forModel(spec: ModelSpec, roomForOptimizer: Boolean) = RuntimeTuning(
+            optimization = if (spec.optimizedPeakMemoryMb != null && roomForOptimizer) {
+                OrtSession.SessionOptions.OptLevel.ALL_OPT
+            } else {
+                OrtSession.SessionOptions.OptLevel.NO_OPT
+            },
+        )
+    }
+}
 
 object EngineFactory {
 
@@ -73,7 +91,7 @@ object EngineFactory {
         spec: ModelSpec,
         modelFile: File,
         requested: List<Stem>,
-        tuning: RuntimeTuning = RuntimeTuning(),
+        tuning: RuntimeTuning,
     ): SeparationEngine {
         val env = OrtEnvironment.getEnvironment()
         val options = OrtSession.SessionOptions().apply {

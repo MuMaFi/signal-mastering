@@ -111,6 +111,9 @@ fun MainScreen(initialAudio: Uri? = null) {
     LaunchedEffect(state) {
         if (state is SeparationState.Done) installedRevision++
     }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) { models.pruneRetired() }
+    }
 
     LargeTitleScaffold(
         title = "Isolate",

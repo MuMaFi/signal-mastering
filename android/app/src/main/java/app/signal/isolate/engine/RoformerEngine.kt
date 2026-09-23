@@ -152,6 +152,10 @@ class RoformerEngine(
         /**
          * 4 s step: 1.5 s of overlap, the same 27 % the published 11 s / 8 s recipe
          * uses, so the compute per second of audio is unchanged.
+         *
+         * A 5 s step would be 20 % faster. Paired on 25 MUSDB18 test tracks it cost
+         * 0.15 dB on the median track and 2.2 dB on the worst, so it was not taken —
+         * this is the model people pick for quality.
          */
         const val STRIDE = 4 * 44_100
 

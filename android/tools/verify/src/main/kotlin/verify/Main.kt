@@ -7,7 +7,6 @@ import app.signal.isolate.audio.Stft
 import app.signal.isolate.engine.EngineFactory
 import app.signal.isolate.engine.RuntimeTuning
 import ai.onnxruntime.OrtSession
-import app.signal.isolate.model.EngineKind
 import app.signal.isolate.model.ModelCatalog
 import app.signal.isolate.model.ModelSpec
 import app.signal.isolate.model.Stem
@@ -36,7 +35,7 @@ fun main(args: Array<String>) {
     val only = args.getOrNull(2)?.removePrefix("--only=")
     // Re-measure the runtime knobs: --tune=opt,pattern,arena[,threads]
     // e.g. --tune=none,true,true,4  (opt: none | basic | extended | all)
-    val tuning = args.firstOrNull { it.startsWith("--tune=") }
+    val tuning: RuntimeTuning? = args.firstOrNull { it.startsWith("--tune=") }
         ?.removePrefix("--tune=")?.split(",")
         ?.let {
             RuntimeTuning(
@@ -51,11 +50,11 @@ fun main(args: Array<String>) {
                 threads = it.getOrNull(3)?.toIntOrNull() ?: EngineFactory.defaultThreads(),
             )
         }
-        ?: RuntimeTuning()
-    println(
-        "tuning: opt=${tuning.optimization} memoryPattern=${tuning.memoryPattern} " +
-            "arena=${tuning.arena} threads=${tuning.threads}",
-    )
+    println(if (tuning == null) "tuning: each model's own" else "tuning: $tuning")
+    // Run the window N times, as consecutive chunks of a song do: --repeat=4. The peak
+    // then covers the steady state, not only the session build and the first run.
+    val repeats = args.firstOrNull { it.startsWith("--repeat=") }
+        ?.removePrefix("--repeat=")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
 
     println("== fft ==")
     checkFft()
@@ -82,44 +81,23 @@ fun main(args: Array<String>) {
     if (only == null || only == "roformer") {
         println("\n== mel-band roformer ==")
         runEngine(ModelCatalog.ROFORMER, models, mix, data, "kt_roformer",
-            listOf(Stem.VOCALS, Stem.INSTRUMENTAL), tuning)
+            listOf(Stem.VOCALS, Stem.INSTRUMENTAL), tuning, repeats)
     }
 
     if (only == null || only == "scnet") {
         println("\n== scnet ==")
-        runEngine(SCNET_UNDER_TEST, models, mix, data, "kt_scnet",
-            listOf(Stem.VOCALS, Stem.INSTRUMENTAL, Stem.DRUMS, Stem.BASS, Stem.OTHER), tuning)
+        runEngine(ModelCatalog.SCNET_SMALL, models, mix, data, "kt_scnet",
+            listOf(Stem.VOCALS, Stem.INSTRUMENTAL, Stem.DRUMS, Stem.BASS, Stem.OTHER), tuning, repeats)
     }
 
     if (only == null || only == "demucs") {
         println("\n== ht-demucs ==")
         runEngine(ModelCatalog.DEMUCS_4STEM, models, mix, data, "kt_demucs",
-            listOf(Stem.VOCALS, Stem.INSTRUMENTAL, Stem.DRUMS, Stem.BASS, Stem.OTHER), tuning)
+            listOf(Stem.VOCALS, Stem.INSTRUMENTAL, Stem.DRUMS, Stem.BASS, Stem.OTHER), tuning, repeats)
     }
 
     finish()
 }
-
-/**
- * SCNet as the harness runs it. Not in ModelCatalog yet: the app only offers a model once
- * it has somewhere to download it from, and this one is exported here from the official
- * weights (tools/onnx/export_scnet.py) rather than fetched.
- */
-private val SCNET_UNDER_TEST = ModelSpec(
-    id = "scnet_small",
-    displayName = "SCNet",
-    subtitle = "",
-    engine = EngineKind.SCNET,
-    entryFile = "scnet_small.onnx",
-    files = emptyList(),
-    stems = listOf(Stem.VOCALS, Stem.INSTRUMENTAL, Stem.DRUMS, Stem.BASS, Stem.OTHER),
-    quality = "",
-    speedHint = "",
-    minRamGb = 2,
-    peakMemoryMb = 600,
-    license = "MIT",
-    source = "",
-)
 
 private fun finish(): Nothing {
     println(if (failures == 0) "\nALL CHECKS PASSED" else "\n$failures CHECK(S) FAILED")
@@ -270,8 +248,12 @@ private fun runEngine(
     data: File,
     prefix: String,
     requested: List<Stem>,
-    tuning: RuntimeTuning = RuntimeTuning(),
+    override: RuntimeTuning? = null,
+    repeats: Int = 1,
 ) {
+    // By default, what a phone with room to spare runs: the optimiser wherever it pays.
+    val tuning = override ?: RuntimeTuning.forModel(spec, roomForOptimizer = true)
+    println("  tuning: opt=${tuning.optimization} pattern=${tuning.memoryPattern} threads=${tuning.threads}")
     val file = File(models, spec.entryFile)
     if (!file.isFile) {
         println("  (missing ${file.name}; skipped)")
@@ -282,11 +264,19 @@ private fun runEngine(
     engine.use {
         val window = FloatArray(engine.windowFrames * engine.channels)
         System.arraycopy(mix, 0, window, 0, minOf(mix.size, window.size))
-        val started = System.nanoTime()
-        val outputs = engine.process(window)
-        val seconds = (System.nanoTime() - started) / 1e9
+        var outputs = emptyArray<FloatArray>()
+        val times = List(repeats) {
+            val started = System.nanoTime()
+            outputs = engine.process(window)
+            (System.nanoTime() - started) / 1e9
+        }
+        // With repeats, the first run (allocator warm-up) is left out of the timing.
+        val seconds = if (repeats > 1) times.drop(1).average() else times[0]
         val audioSeconds = engine.windowFrames / 44100.0
-        println("  %.1f s for %.1f s of audio (RTF %.2f)".format(seconds, audioSeconds, seconds / audioSeconds))
+        println("  %.1f s for %.1f s of audio (RTF %.2f)%s".format(
+            seconds, audioSeconds, seconds / audioSeconds,
+            if (repeats > 1) ", mean of runs 2-$repeats" else "",
+        ))
         val (baseline, peak) = rss.stop()
         println("  RSS %.2f GB before the session, %.2f GB peak (+%.2f GB)"
             .format(baseline / 1e9, peak / 1e9, (peak - baseline) / 1e9))
