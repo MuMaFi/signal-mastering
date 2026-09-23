@@ -15,8 +15,8 @@ android {
         applicationId = "app.signal.isolate"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         // ONNX Runtime ships arm64-v8a / armeabi-v7a / x86 / x86_64.
         // Separation is only realistic on 64-bit ARM (and x86_64 for emulators),
