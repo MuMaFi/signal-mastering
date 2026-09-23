@@ -68,6 +68,11 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        // Store native libraries compressed. By default AGP keeps them uncompressed so
+        // they can be mapped straight from the APK, but ONNX Runtime alone is 33 MB raw
+        // and 12 MB deflated: this cuts the arm64 download from 35 MB to about 15 MB.
+        // The cost is a one-off extraction on install, trivial next to the model weights.
+        jniLibs.useLegacyPackaging = true
     }
 }
 
