@@ -215,13 +215,13 @@ installable — swap in a real keystore before distributing.
 ## What to expect on a phone
 
 Peak memory is the number that decides whether this works at all, so it is measured
-from the kernel's own high-water mark (VmHWM), through the same Java API the app uses,
-four threads as on an 8-core phone:
+from the kernel's own high-water mark (VmHWM) across several consecutive chunks — the
+steady state of a real song, not a single run — four threads as on an 8-core phone:
 
 | | Peak RSS | RTF | A 4-minute song |
 | --- | ---: | ---: | --- |
-| Mel-Band RoFormer | 1.92 GB | 1.8 | ~7 minutes |
-| HT-Demucs | 1.24 GB | 0.41 | ~2 minutes |
+| Mel-Band RoFormer | 1.81 GB | 1.8 | ~7 minutes |
+| HT-Demucs | 1.11 GB | 0.35 | ~2 minutes |
 
 RTF is from an uncontended run on the development machine's x86 CPU, not from a phone;
 treat the times as an order of magnitude. Run it plugged in — it is minutes of full

@@ -7,6 +7,7 @@ import app.signal.isolate.audio.Stft
 import app.signal.isolate.engine.EngineFactory
 import app.signal.isolate.engine.RuntimeTuning
 import ai.onnxruntime.OrtSession
+import app.signal.isolate.model.EngineKind
 import app.signal.isolate.model.ModelCatalog
 import app.signal.isolate.model.ModelSpec
 import app.signal.isolate.model.Stem
@@ -84,6 +85,12 @@ fun main(args: Array<String>) {
             listOf(Stem.VOCALS, Stem.INSTRUMENTAL), tuning)
     }
 
+    if (only == null || only == "scnet") {
+        println("\n== scnet ==")
+        runEngine(SCNET_UNDER_TEST, models, mix, data, "kt_scnet",
+            listOf(Stem.VOCALS, Stem.INSTRUMENTAL, Stem.DRUMS, Stem.BASS, Stem.OTHER), tuning)
+    }
+
     if (only == null || only == "demucs") {
         println("\n== ht-demucs ==")
         runEngine(ModelCatalog.DEMUCS_4STEM, models, mix, data, "kt_demucs",
@@ -92,6 +99,27 @@ fun main(args: Array<String>) {
 
     finish()
 }
+
+/**
+ * SCNet as the harness runs it. Not in ModelCatalog yet: the app only offers a model once
+ * it has somewhere to download it from, and this one is exported here from the official
+ * weights (tools/onnx/export_scnet.py) rather than fetched.
+ */
+private val SCNET_UNDER_TEST = ModelSpec(
+    id = "scnet_small",
+    displayName = "SCNet",
+    subtitle = "",
+    engine = EngineKind.SCNET,
+    entryFile = "scnet_small.onnx",
+    files = emptyList(),
+    stems = listOf(Stem.VOCALS, Stem.INSTRUMENTAL, Stem.DRUMS, Stem.BASS, Stem.OTHER),
+    quality = "",
+    speedHint = "",
+    minRamGb = 2,
+    peakMemoryMb = 600,
+    license = "MIT",
+    source = "",
+)
 
 private fun finish(): Nothing {
     println(if (failures == 0) "\nALL CHECKS PASSED" else "\n$failures CHECK(S) FAILED")

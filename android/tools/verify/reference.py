@@ -126,4 +126,45 @@ stems.astype(np.float32).reshape(-1).tofile(os.path.join(OUT, "ref_demucs_stems.
 for i, nm in enumerate(["drums", "bass", "other", "vocals"]):
     print("  demucs %-7s rms %.6f peak %.6f"
           % (nm, np.sqrt((stems[i] ** 2).mean()), np.abs(stems[i]).max()))
+
+# --- SCNet reference (rectangular window, normalised STFT, 476 frames) ---
+scnet = os.path.join(MODELS, "scnet_small.onnx")
+if os.path.isfile(scnet):
+    del sess2
+    gc.collect()
+    S_NFFT, S_HOP, S_CHUNK, S_PAD = 4096, 1024, 485100, 1300
+    S_FRAMES = 1 + (S_CHUNK + S_PAD) // S_HOP
+    S_NORM = np.sqrt(S_NFFT)
+    def s_stft(x):
+        p = S_NFFT // 2
+        xp = np.pad(x, (p, p), mode="reflect")
+        idx = np.arange(S_NFFT)[None, :] + S_HOP * np.arange(1 + len(x) // S_HOP)[:, None]
+        return np.fft.rfft(xp[idx], axis=1) / S_NORM            # rectangular window
+    def s_istft(S, length):
+        p = S_NFFT // 2
+        frames = S.shape[0]
+        total = (frames - 1) * S_HOP + S_NFFT
+        acc = np.zeros(total); cnt = np.zeros(total)
+        y = np.fft.irfft(S * S_NORM, n=S_NFFT, axis=1)
+        for t in range(frames):
+            acc[t * S_HOP: t * S_HOP + S_NFFT] += y[t]
+            cnt[t * S_HOP: t * S_HOP + S_NFFT] += 1.0
+        return (acc / np.maximum(cnt, 1e-8))[p:p + length]
+    seg = np.pad(sig[:, :S_CHUNK].astype(np.float64), ((0, 0), (0, S_PAD)))
+    inp = np.zeros((1, 4, S_NFFT // 2 + 1, S_FRAMES), np.float32)
+    for c in range(CH):
+        Z = s_stft(seg[c])
+        inp[0, 2 * c] = Z.T.real
+        inp[0, 2 * c + 1] = Z.T.imag
+    sess3 = ort.InferenceSession(scnet, so, providers=["CPUExecutionProvider"])
+    out = sess3.run(None, {sess3.get_inputs()[0].name: inp})[0][0]
+    stems_s = np.zeros((4, CH, S_CHUNK), np.float32)
+    for src in range(4):
+        for c in range(CH):
+            Z = (out[src, 2 * c] + 1j * out[src, 2 * c + 1]).T
+            stems_s[src, c] = s_istft(Z, S_CHUNK + S_PAD)[:S_CHUNK]
+    stems_s.reshape(-1).tofile(os.path.join(OUT, "ref_scnet_stems.f32"))
+    for i, nm in enumerate(["drums", "bass", "other", "vocals"]):
+        print("  scnet  %-7s rms %.6f" % (nm, np.sqrt((stems_s[i] ** 2).mean())))
+
 print("REFERENCE OK")

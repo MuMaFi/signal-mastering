@@ -36,5 +36,12 @@ for i, name in enumerate(["drums", "bass", "other", "vocals"]):
 check("demucs instrumental", stems[0] + stems[1] + stems[2],
       load("kt_demucs_instrumental.f32").reshape(-1, 2).T)
 
+if os.path.isfile(os.path.join(D, "ref_scnet_stems.f32")):
+    sc = load("ref_scnet_stems.f32").reshape(4, 2, 485100)
+    for i, name in enumerate(["drums", "bass", "other", "vocals"]):
+        check("scnet " + name, sc[i], load("kt_scnet_%s.f32" % name).reshape(-1, 2).T)
+    check("scnet instrumental", sc[0] + sc[1] + sc[2],
+          load("kt_scnet_instrumental.f32").reshape(-1, 2).T)
+
 print("\nALL COMPARISONS PASSED" if failures == 0 else "\n%d COMPARISON(S) FAILED" % failures)
 raise SystemExit(0 if failures == 0 else 1)

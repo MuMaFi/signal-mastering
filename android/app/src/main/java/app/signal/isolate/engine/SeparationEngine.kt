@@ -35,30 +35,26 @@ class EngineException(message: String, cause: Throwable? = null) : Exception(mes
  * (`--tune=opt,pattern,arena,threads`) rather than leaving them as constants someone
  * reasoned their way to.
  *
- * The one that matters is [optimization], and the default is **off**. ONNX Runtime's
- * graph optimiser constant-folds while it builds the session, and on HT-Demucs that
- * folding alone peaks at 6.6 GB before a single sample is processed — the kernel's
- * high-water mark (VmHWM), same machine, same input:
+ * Two of them are off, both for memory, both measured as the kernel's high-water mark
+ * (VmHWM) over several consecutive chunks — because that is what a song is:
  *
  * ```
- *                        optimiser on          optimiser off
- *   HT-Demucs            6.60 GB  RTF 0.36     1.06 GB  RTF 0.41
- *   RoFormer, 11 s       3.44 GB  RTF 1.75     2.66 GB  RTF 2.08
- *   RoFormer, 5.5 s        —                   1.77 GB  RTF 1.80
+ *                        optimiser on   pattern on    both off (the defaults)
+ *   HT-Demucs            6.60 GB        1.93 GB       1.11 GB    same speed
+ *   RoFormer, 5.5 s        —            2.86 GB       1.81 GB    same speed
  * ```
  *
- * On an 8 GB phone the left column is the difference between a slow render and a phone
- * that stops responding for minutes. With the optimiser off, the RoFormer weights are
- * also left memory-mapped from disk, so the kernel can drop and re-read those pages
- * under pressure instead of having to kill something.
- *
- * An earlier version of this comment tuned the arena and the memory-pattern planner and
- * concluded the runtime's defaults were fine. They were measured with the optimiser on,
- * where the optimiser's own spike swamped everything else.
+ * - [optimization]: the graph optimiser constant-folds while it builds the session, and
+ *   on HT-Demucs that alone peaked at 6.6 GB before a sample was processed. It is what
+ *   froze a phone in 1.0.0. With it off the RoFormer weights also stay memory-mapped.
+ * - [memoryPattern]: the planner records the first run's allocations and pre-allocates
+ *   that plan as one block from the second run on. For the RoFormer the jump is 1.78 →
+ *   2.85 GB at chunk two, then flat — invisible to any single-run measurement, which is
+ *   how 1.0.1 shipped with it on.
  */
 data class RuntimeTuning(
     val optimization: OrtSession.SessionOptions.OptLevel = OrtSession.SessionOptions.OptLevel.NO_OPT,
-    val memoryPattern: Boolean = true,
+    val memoryPattern: Boolean = false,
     val arena: Boolean = true,
     val threads: Int = EngineFactory.defaultThreads(),
 )
@@ -101,6 +97,7 @@ object EngineFactory {
         return when (spec.engine) {
             EngineKind.ROFORMER -> RoformerEngine(env, session, requested)
             EngineKind.DEMUCS -> DemucsEngine(env, session, spec, requested)
+            EngineKind.SCNET -> ScnetEngine(env, session, spec, requested)
         }
     }
 

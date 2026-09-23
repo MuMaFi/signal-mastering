@@ -9,7 +9,7 @@ enum class Stem(val id: String, val label: String) {
     OTHER("other", "Other"),
 }
 
-enum class EngineKind { ROFORMER, DEMUCS }
+enum class EngineKind { ROFORMER, DEMUCS, SCNET }
 
 data class ModelFile(
     val name: String,
@@ -57,7 +57,7 @@ data class ModelSpec(
  */
 object ModelCatalog {
 
-    /** Measured at RoformerEngine.FRAMES (5.5 s chunks): 1.77 GB VmHWM, optimiser off. */
+    /** Steady state at RoformerEngine.FRAMES (5.5 s chunks): 1.81 GB VmHWM over consecutive chunks. */
     private const val ROFORMER_PEAK_MB = 1_850L
 
     /**
@@ -113,7 +113,7 @@ object ModelCatalog {
         quality = "Very good vocal isolation; slightly more instrumental bleed than RoFormer.",
         speedHint = "~0.5x real time — a 4-minute song takes about 2 minutes.",
         minRamGb = 4,
-        peakMemoryMb = 1_100,
+        peakMemoryMb = 1_150,
         license = "MIT",
         source = "https://huggingface.co/StemSplitio/htdemucs-ft-onnx",
     )
@@ -137,7 +137,7 @@ object ModelCatalog {
         quality = "Full band split when you want more than vocals and backing track.",
         speedHint = "~0.5x real time — a 4-minute song takes about 2 minutes.",
         minRamGb = 4,
-        peakMemoryMb = 1_100,
+        peakMemoryMb = 1_150,
         license = "MIT",
         source = "https://huggingface.co/StemSplitio/htdemucs-onnx",
     )

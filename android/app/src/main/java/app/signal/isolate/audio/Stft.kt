@@ -5,20 +5,30 @@ import kotlin.math.max
 
 /**
  * `torch.stft` / `torch.istft` with `center=True`, `pad_mode="reflect"`,
- * `normalized=False`, periodic Hann window — the exact contract the exported
- * Mel-Band RoFormer core expects, since its STFT was stripped out of the graph.
+ * `normalized=False` — the contract the separation models expect, since their STFTs
+ * were stripped out of the graphs.
+ *
+ * The window is a parameter because the models disagree on it: the RoFormer uses a
+ * periodic Hann, while SCNet calls `torch.stft` with no window at all, which PyTorch
+ * treats as rectangular. Nothing in SCNet's config says so; feeding it a Hann-windowed
+ * spectrogram still runs and returns audio, just without any separation in it.
  *
  * Frame count matches PyTorch: `1 + length / hop`.
  */
-class Stft(val nFft: Int, val hop: Int) {
+enum class Window { HANN, RECTANGULAR }
+
+class Stft(val nFft: Int, val hop: Int, windowType: Window = Window.HANN) {
 
     val bins = nFft / 2 + 1
     private val pad = nFft / 2
     private val fft = Fft(nFft)
 
-    /** Periodic (not symmetric) Hann — `torch.hann_window(n)` default. */
+    /** Periodic (not symmetric) Hann — `torch.hann_window(n)` — or all ones. */
     val window = FloatArray(nFft) { i ->
-        (0.5 - 0.5 * cos(2.0 * Math.PI * i / nFft)).toFloat()
+        when (windowType) {
+            Window.HANN -> (0.5 - 0.5 * cos(2.0 * Math.PI * i / nFft)).toFloat()
+            Window.RECTANGULAR -> 1f
+        }
     }
 
     fun frameCount(length: Int): Int = 1 + length / hop
