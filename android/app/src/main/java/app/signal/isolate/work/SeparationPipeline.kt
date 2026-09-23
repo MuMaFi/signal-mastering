@@ -8,6 +8,7 @@ import app.signal.isolate.audio.PcmFile
 import app.signal.isolate.audio.WavConverter
 import app.signal.isolate.audio.WavWriter
 import app.signal.isolate.engine.EngineFactory
+import app.signal.isolate.model.DeviceCapability
 import app.signal.isolate.model.ModelCatalog
 import app.signal.isolate.model.ModelManager
 import app.signal.isolate.model.Stem
@@ -39,13 +40,21 @@ class SeparationPipeline(private val context: Context) {
         val scratch = File(context.cacheDir, "work").apply { deleteRecursively(); mkdirs() }
         val outputDir = File(context.filesDir, "stems").apply { mkdirs() }
 
+        // No point fetching 741 MB for a model this phone cannot hold right now.
+        DeviceCapability.headroomProblem(context, spec)?.let {
+            return@withContext SeparationState.Failed(it)
+        }
+        RunJournal.begin(context, spec.displayName, request.displayName)
+
         try {
+            RunJournal.stage(context, spec.displayName, request.displayName, "downloading the model")
             onState(SeparationState.Downloading(spec.displayName, models.installedBytes(spec), spec.totalBytes))
             models.ensure(spec) { done, total ->
                 onState(SeparationState.Downloading(spec.displayName, done, total))
             }
 
             currentCoroutineContext().ensureActive()
+            RunJournal.stage(context, spec.displayName, request.displayName, "reading the track")
             onState(SeparationState.Decoding(0f))
             val mixFile = File(scratch, "mix.f32")
             val decoded = withContext(Dispatchers.IO) {
@@ -55,6 +64,12 @@ class SeparationPipeline(private val context: Context) {
             }
 
             currentCoroutineContext().ensureActive()
+            // Decoding took time and other apps may have grown; check again right before
+            // the one allocation that can take the phone down.
+            DeviceCapability.headroomProblem(context, spec)?.let {
+                throw MemoryPressure(it)
+            }
+            RunJournal.stage(context, spec.displayName, request.displayName, "loading the model")
             val requested = request.stems.ifEmpty { listOf(Stem.VOCALS) }
             val engine = EngineFactory.create(
                 spec = spec,
@@ -91,6 +106,16 @@ class SeparationPipeline(private val context: Context) {
                     var elapsedNanos = 0L
                     while (index < chunks) {
                         currentCoroutineContext().ensureActive()
+                        if (DeviceCapability.underPressure(context)) {
+                            throw MemoryPressure(
+                                "Stopped at chunk ${index + 1} of $chunks: Android reported that " +
+                                    "memory is running out. Close other apps and try again.",
+                            )
+                        }
+                        RunJournal.stage(
+                            context, spec.displayName, request.displayName,
+                            "separating chunk ${index + 1} of $chunks",
+                        )
                         val t0 = System.nanoTime()
                         pcm.read(chunkStart, engine.windowFrames, window)
                         val produced = engine.process(window)
@@ -140,24 +165,36 @@ class SeparationPipeline(private val context: Context) {
             }
 
             scratch.deleteRecursively()
+            RunJournal.end(context)
             SeparationState.Done(
                 results = results,
                 elapsedSeconds = (System.currentTimeMillis() - started) / 1000,
             )
         } catch (e: kotlinx.coroutines.CancellationException) {
             scratch.deleteRecursively()
+            RunJournal.end(context)
             throw e
+        } catch (e: MemoryPressure) {
+            scratch.deleteRecursively()
+            RunJournal.end(context)
+            SeparationState.Failed(e.message ?: "Not enough memory.")
         } catch (e: OutOfMemoryError) {
             scratch.deleteRecursively()
+            RunJournal.end(context)
             SeparationState.Failed(
-                "Ran out of memory. ${spec.displayName} needs about ${spec.minRamGb} GB of " +
-                    "free RAM — close other apps or pick a smaller model.",
+                "Ran out of memory. ${spec.displayName} needs about " +
+                    "%.1f GB free — close other apps or pick a smaller model."
+                        .format((spec.peakMemoryMb + 350) / 1024.0),
             )
         } catch (e: Throwable) {
             scratch.deleteRecursively()
+            RunJournal.end(context)
             SeparationState.Failed(e.message ?: e::class.java.simpleName)
         }
     }
+
+    /** A run stopped on purpose because memory ran short, not because something broke. */
+    private class MemoryPressure(message: String) : Exception(message)
 
     private fun sanitise(name: String): String =
         name.substringBeforeLast('.')

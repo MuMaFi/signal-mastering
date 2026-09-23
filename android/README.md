@@ -61,8 +61,21 @@ and freeing as it goes. Same weights, same arithmetic, different schedule:
 | time axis made dynamic | **3.4 GB** | **16.2 s** |
 
 3.1× less memory *and* 1.8× faster, with a maximum output difference of 4.9e-04 — two
-ulps of fp16. That is what moves this model from "impossible on a phone" to "runs on a
-flagship".
+ulps of fp16.
+
+A dynamic time axis also means the chunk no longer has to be 11 s, and the attention
+working set shrinks with it. Together with the graph optimiser switched off (see
+[what went wrong in 1.0.0](#100-froze-phones--what-happened)) — which also leaves the
+weights memory-mapped from disk — the app now runs 5.5 s chunks:
+
+| RoFormer, optimiser off | Peak RSS | RTF |
+| --- | ---: | ---: |
+| 11 s chunks | 2.66 GB | 2.08 |
+| **5.5 s chunks (what the app runs)** | **1.77 GB** | **1.80** |
+
+Shorter context could cost separation quality, so it is checked against ground truth
+rather than assumed: [`tools/verify/musdb_eval.py`](tools/verify/musdb_eval.py) runs
+both chunk lengths through the app's pipeline on the MUSDB18 test split.
 
 [`tools/onnx/make_dynamic_time.py`](tools/onnx/make_dynamic_time.py) performs the
 rewrite and documents exactly what it touches: 17 `Reshape` shape constants, and the
@@ -201,30 +214,51 @@ installable — swap in a real keystore before distributing.
 
 ## What to expect on a phone
 
-Separation is heavy, and it is honest to say so up front. Measured through the Java API
-on x86_64 — the closest proxy available here for the Android AAR, **not** a measurement
-on a real phone:
+Peak memory is the number that decides whether this works at all, so it is measured
+from the kernel's own high-water mark (VmHWM), through the same Java API the app uses,
+four threads as on an 8-core phone:
 
 | | Peak RSS | RTF | A 4-minute song |
 | --- | ---: | ---: | --- |
-| Mel-Band RoFormer | ~4.1 GB | 2.1 | ~8 minutes |
-| HT-Demucs | 6.5 GB (varied 6.5–8.7 across repeats) | 0.47 | ~2 minutes |
+| Mel-Band RoFormer | 1.92 GB | 1.8 | ~7 minutes |
+| HT-Demucs | 1.24 GB | 0.41 | ~2 minutes |
 
-Two things follow from that, and neither is comfortable:
+RTF is from an uncontended run on the development machine's x86 CPU, not from a phone;
+treat the times as an order of magnitude. Run it plugged in — it is minutes of full
+load — and leave the app if you like: the work runs in a foreground service.
 
-- **Both models want an 8 GB phone.** HT-Demucs is the faster and much smaller
-  download, but it is not the low-memory option — its measured peak is in the same range
-  as the RoFormer's. The app reads the device's total RAM and says so on each model
-  before you pick it, rather than letting you find out twenty minutes into a render.
-- **The Demucs figures did not repeat cleanly** on a contended machine. Treat them as a
-  range. The RoFormer numbers, and the graph-rewrite result above, reproduced across
-  both runtimes and every repeat.
-
-Run it with the screen off and the phone plugged in. The work runs in a foreground
-service, so leaving the app does not kill it.
+Before it downloads anything, and again right before it loads the model, the app
+compares each model's measured peak against the memory Android reports as free *now*,
+above the point where Android starts killing apps. If it does not fit, it says so and
+does not start. During a run it stops cleanly as soon as Android signals low memory.
 
 The app is arm64-only by design. 32-bit ARM cannot address enough memory for these
 models, so shipping that slice would only produce crashes.
+
+<br>
+
+## 1.0.0 froze phones — what happened
+
+The first release made an 8 GB phone (Honor Magic 4 Pro) unresponsive for about ten
+minutes. Two mistakes combined:
+
+- **ONNX Runtime's graph optimiser, left on.** It constant-folds while it builds the
+  session. On HT-Demucs that folding alone peaks at 6.6 GB before a single sample is
+  processed; through the Java API it reached 7.4 GB and was killed by the kernel's OOM
+  killer on the development machine. With the optimiser off: 1.24 GB, about 15 %
+  slower. The RoFormer went from 3.2 GB to 1.9 GB, the rest of that coming from shorter
+  chunks (see [the graph section](#the-published-roformer-does-not-fit-on-a-phone--so-the-app-changes-the-graph)).
+  The earlier memory measurements tuned the arena and the memory-pattern planner with
+  the optimiser on, where its spike swamped everything else, and sampled RSS every
+  50 ms — which misses a spike that short. They were wrong, and so was the advice built
+  on them.
+- **A check against total RAM, not free RAM.** "8 GB recommended" let an 8 GB phone
+  through, when Android itself holds a large part of that. And because separation runs
+  as a foreground service, Android protected the app and killed everything else first —
+  which is why the whole phone stalled rather than just the app.
+
+Both are fixed as described above. If Android does kill a run anyway, the app now leaves
+a note behind and tells you, on the next launch, which stage the run died in.
 
 <br>
 

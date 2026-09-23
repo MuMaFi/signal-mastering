@@ -32,31 +32,32 @@ class EngineException(message: String, cause: Throwable? = null) : Exception(mes
 
 /**
  * ONNX Runtime knobs, kept as a named type so the verification harness can sweep them
- * (`--tune=pattern,arena,threads`) rather than leaving them as constants someone
+ * (`--tune=opt,pattern,arena,threads`) rather than leaving them as constants someone
  * reasoned their way to.
  *
- * The defaults here are ONNX Runtime's own, because sweeping them did not produce a
- * reliable reason to change them. Measured through the Java API (ORT 1.30, x86_64 — the
- * closest proxy available for the Android AAR), peak process RSS over one 11 s RoFormer
- * chunk and one 7.8 s Demucs segment:
+ * The one that matters is [optimization], and the default is **off**. ONNX Runtime's
+ * graph optimiser constant-folds while it builds the session, and on HT-Demucs that
+ * folding alone peaks at 6.6 GB before a single sample is processed — the kernel's
+ * high-water mark (VmHWM), same machine, same input:
  *
  * ```
- *   memoryPattern=true,  arena=true    RoFormer 4.1 GB   Demucs 6.5 GB   <- default
- *   memoryPattern=false, arena=true    RoFormer 4.0 GB   Demucs 8.7 GB
- *   memoryPattern=false, arena=false   RoFormer 3.6 GB, and twice as slow
+ *                        optimiser on          optimiser off
+ *   HT-Demucs            6.60 GB  RTF 0.36     1.06 GB  RTF 0.41
+ *   RoFormer, 11 s       3.44 GB  RTF 1.75     2.66 GB  RTF 2.08
+ *   RoFormer, 5.5 s        —                   1.77 GB  RTF 1.80
  * ```
  *
- * Two caveats worth stating rather than hiding. The Demucs figures did not repeat
- * cleanly across thread counts on a contended machine (6.5 GB at two threads, 8.7 GB at
- * one and at three), so treat them as a range, not a spec. And the same sweep under the
- * Python runtime ranks the options differently — which is the whole reason this is a
- * parameter.
+ * On an 8 GB phone the left column is the difference between a slow render and a phone
+ * that stops responding for minutes. With the optimiser off, the RoFormer weights are
+ * also left memory-mapped from disk, so the kernel can drop and re-read those pages
+ * under pressure instead of having to kill something.
  *
- * What *is* robust, reproducing across both runtimes and every repeat, is the effect of
- * the RoFormer graph rewrite: 10.4–10.7 GB as published, 3.0–4.1 GB once its time axis
- * is dynamic. See `tools/onnx/make_dynamic_time.py`.
+ * An earlier version of this comment tuned the arena and the memory-pattern planner and
+ * concluded the runtime's defaults were fine. They were measured with the optimiser on,
+ * where the optimiser's own spike swamped everything else.
  */
 data class RuntimeTuning(
+    val optimization: OrtSession.SessionOptions.OptLevel = OrtSession.SessionOptions.OptLevel.NO_OPT,
     val memoryPattern: Boolean = true,
     val arena: Boolean = true,
     val threads: Int = EngineFactory.defaultThreads(),
@@ -82,7 +83,7 @@ object EngineFactory {
         val options = OrtSession.SessionOptions().apply {
             setIntraOpNumThreads(tuning.threads)
             setInterOpNumThreads(1)
-            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            setOptimizationLevel(tuning.optimization)
             setMemoryPatternOptimization(tuning.memoryPattern)
             setCPUArenaAllocator(tuning.arena)
         }
@@ -103,7 +104,12 @@ object EngineFactory {
         }
     }
 
-    /** Uses the big cores and leaves one thread for decode and disk. */
+    /**
+     * Half the cores, at most four. Phone SoCs pair fast cores with efficiency ones
+     * (the Snapdragon 8 Gen 1 is 1 + 3 fast, 4 slow); spreading a matmul across the
+     * slow ones makes every step wait for its stragglers, and each thread brings its
+     * own scratch buffers.
+     */
     fun defaultThreads(): Int =
-        (Runtime.getRuntime().availableProcessors() - 1).coerceIn(2, 6)
+        (Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 4)
 }

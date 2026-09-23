@@ -35,6 +35,11 @@ data class ModelSpec(
     val quality: String,
     val speedHint: String,
     val minRamGb: Int,
+    /**
+     * Measured peak resident memory of one inference, in MB (kernel VmHWM, optimiser
+     * off). The headroom check in [DeviceCapability] refuses to start without it free.
+     */
+    val peakMemoryMb: Long,
     val license: String,
     val source: String,
 ) {
@@ -51,6 +56,9 @@ data class ModelSpec(
  * catalogue is the best *openly exported* separators, ordered by measured quality.
  */
 object ModelCatalog {
+
+    /** Measured at RoformerEngine.FRAMES (5.5 s chunks): 1.77 GB VmHWM, optimiser off. */
+    private const val ROFORMER_PEAK_MB = 1_850L
 
     /**
      * Mel-Band RoFormer, SYHFT / "Kim Vocal" lineage — the strongest open vocal
@@ -75,9 +83,10 @@ object ModelCatalog {
         ),
         stems = listOf(Stem.VOCALS, Stem.INSTRUMENTAL),
         quality = "Best separation available offline. Clean sibilance, very little instrumental bleed.",
-        // RTF 2.1 through ONNX Runtime's Java API, the closest proxy here for Android.
-        speedHint = "~2x real time — a 4-minute song takes about 8 minutes.",
-        minRamGb = 8,
+        // RTF 1.8 at 5.5 s chunks, optimiser off (uncontended x86 run, not a phone).
+        speedHint = "~2x real time — a 4-minute song takes about 7 minutes.",
+        minRamGb = 6,
+        peakMemoryMb = ROFORMER_PEAK_MB,
         license = "MIT",
         source = "https://huggingface.co/silverdaw/mel-band-roformer-vocals-onnx",
     )
@@ -103,9 +112,8 @@ object ModelCatalog {
         stems = listOf(Stem.VOCALS, Stem.INSTRUMENTAL),
         quality = "Very good vocal isolation; slightly more instrumental bleed than RoFormer.",
         speedHint = "~0.5x real time — a 4-minute song takes about 2 minutes.",
-        // Measured peak RSS is in the same range as the RoFormer's. What this model
-        // actually saves is time and download size, not memory.
-        minRamGb = 8,
+        minRamGb = 4,
+        peakMemoryMb = 1_100,
         license = "MIT",
         source = "https://huggingface.co/StemSplitio/htdemucs-ft-onnx",
     )
@@ -128,7 +136,8 @@ object ModelCatalog {
         stems = listOf(Stem.VOCALS, Stem.INSTRUMENTAL, Stem.DRUMS, Stem.BASS, Stem.OTHER),
         quality = "Full band split when you want more than vocals and backing track.",
         speedHint = "~0.5x real time — a 4-minute song takes about 2 minutes.",
-        minRamGb = 8,
+        minRamGb = 4,
+        peakMemoryMb = 1_100,
         license = "MIT",
         source = "https://huggingface.co/StemSplitio/htdemucs-onnx",
     )

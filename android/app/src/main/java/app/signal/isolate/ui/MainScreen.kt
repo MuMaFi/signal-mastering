@@ -36,6 +36,7 @@ import app.signal.isolate.model.Stem
 import app.signal.isolate.work.SeparationController
 import app.signal.isolate.work.SeparationRequest
 import app.signal.isolate.work.SeparationService
+import app.signal.isolate.work.RunJournal
 import app.signal.isolate.work.SeparationState
 import app.signal.isolate.work.StemResult
 import app.signal.isolate.work.isRunning
@@ -62,6 +63,14 @@ fun MainScreen(initialAudio: Uri? = null) {
     var installedRevision by remember { mutableIntStateOf(0) }
 
     val spec = ModelCatalog.byId(modelId)
+
+    // A journal left behind by a previous process means Android ended that run, most
+    // likely for memory. Read once per launch — and never while a run is live here.
+    var interrupted by remember {
+        mutableStateOf(
+            if (SeparationController.state.value.isRunning) null else RunJournal.takeInterrupted(context),
+        )
+    }
 
     LaunchedEffect(initialAudio) {
         if (initialAudio != null && sourceUri == null) {
@@ -132,6 +141,10 @@ fun MainScreen(initialAudio: Uri? = null) {
                     },
                 )
             } else {
+                interrupted?.let { run ->
+                    InterruptedNotice(run, onDismiss = { interrupted = null })
+                    SectionSpacer()
+                }
                 SetupView(
                     sourceName = sourceName,
                     track = track,
@@ -434,6 +447,36 @@ internal fun FailedView(message: String, onBack: () -> Unit) {
     }
     SectionSpacer()
     TintedButton(text = "Back", onClick = onBack)
+}
+
+/** Tells the user that the system, not the app, ended their last run — and what to do. */
+@Composable
+internal fun InterruptedNotice(run: RunJournal.Interrupted, onDismiss: () -> Unit) {
+    GroupHeader("Last run did not finish")
+    InsetGroup {
+        ListRow(
+            leading = {
+                Icon(
+                    imageVector = AppleIcons.Warning,
+                    contentDescription = null,
+                    tint = Apple.colors.orange,
+                    modifier = Modifier.size(18.dp),
+                )
+            },
+        ) {
+            RowTitle("Android stopped the separation", strong = true)
+            RowSubtitle(
+                "${run.model} was ${run.stage} for “${run.track}” when the system ended " +
+                    "the app, most likely because memory ran out. This version checks free " +
+                    "memory before it starts; closing other apps first gives it the most room.",
+                maxLines = 6,
+            )
+        }
+        Hairline()
+        ListRow(onClick = onDismiss, role = Role.Button) {
+            RowTitle("OK", color = Apple.colors.tint)
+        }
+    }
 }
 
 // ---------------------------------------------------------------- formatting

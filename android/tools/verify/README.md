@@ -13,11 +13,12 @@ fixtures produced by a NumPy reference.
 ```bash
 pip install numpy onnxruntime
 
-# 1. Fetch the weights once (≈ 900 MB).
+# 1. Fetch the weights once (≈ 900 MB), plus the app's rewritten RoFormer graph.
 mkdir -p models && cd models
 curl -LO https://huggingface.co/silverdaw/mel-band-roformer-vocals-onnx/resolve/main/syhft_core_folded_fp16_webgpu.onnx
 curl -LO https://huggingface.co/silverdaw/mel-band-roformer-vocals-onnx/resolve/main/syhft_core_folded_fp16_webgpu.onnx.data
 curl -LO https://huggingface.co/StemSplitio/htdemucs-onnx/resolve/main/htdemucs_fp16weights.onnx
+cp ../../../app/src/main/assets/roformer_core_dyn_time.onnx .
 cd ..
 
 # 2. Build the fixtures and the reference outputs.
@@ -29,10 +30,27 @@ cd ../.. && ./gradlew :tools:verify:run --args="tools/verify/data tools/verify/m
 #    One model at a time, so peak RSS is not polluted by the previous session:
 #      --only=roformer | --only=demucs
 #    Re-measure the ONNX Runtime knobs:
-#      --tune=memoryPattern,arena[,threads]   e.g. --tune=false,true,4
+#      --tune=opt,memoryPattern,arena[,threads]   e.g. --tune=none,true,true,4
+#      opt: none | basic | extended | all   (the app runs none)
 
 # 4. Diff the two.
 cd tools/verify && python3 compare.py data
+```
+
+Peak memory is read from the kernel's high-water mark (`VmHWM`), not sampled — a
+sampler misses short spikes, and the spike that froze a phone in 1.0.0 was one.
+
+## Separation quality on real music
+
+The checks above prove the app computes what the reference computes. They cannot say
+whether that is *good* separation. [`musdb_eval.py`](musdb_eval.py) does, against
+ground truth: it runs the same pipeline over the MUSDB18 test split and scores it.
+
+```bash
+pip install av
+curl -L -o musdb7.zip "https://zenodo.org/records/3270814/files/MUSDB18-7-STEMS.zip?download=1"
+unzip -q musdb7.zip "test/*" -d musdb
+python3 musdb_eval.py musdb models
 ```
 
 ## What it checks

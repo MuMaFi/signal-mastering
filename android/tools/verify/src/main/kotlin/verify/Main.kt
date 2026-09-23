@@ -6,6 +6,7 @@ import app.signal.isolate.audio.StreamingResampler
 import app.signal.isolate.audio.Stft
 import app.signal.isolate.engine.EngineFactory
 import app.signal.isolate.engine.RuntimeTuning
+import ai.onnxruntime.OrtSession
 import app.signal.isolate.model.ModelCatalog
 import app.signal.isolate.model.ModelSpec
 import app.signal.isolate.model.Stem
@@ -32,18 +33,28 @@ fun main(args: Array<String>) {
     val models = File(args.getOrElse(1) { "models" })
     // Peak RSS is only meaningful per process, so a run can be limited to one model.
     val only = args.getOrNull(2)?.removePrefix("--only=")
-    // Re-measure the runtime knobs: --tune=pattern,arena[,threads] (e.g. --tune=true,true,2).
+    // Re-measure the runtime knobs: --tune=opt,pattern,arena[,threads]
+    // e.g. --tune=none,true,true,4  (opt: none | basic | extended | all)
     val tuning = args.firstOrNull { it.startsWith("--tune=") }
         ?.removePrefix("--tune=")?.split(",")
         ?.let {
             RuntimeTuning(
-                memoryPattern = it[0].toBoolean(),
-                arena = it[1].toBoolean(),
-                threads = it.getOrNull(2)?.toIntOrNull() ?: EngineFactory.defaultThreads(),
+                optimization = when (it[0]) {
+                    "all" -> OrtSession.SessionOptions.OptLevel.ALL_OPT
+                    "extended" -> OrtSession.SessionOptions.OptLevel.EXTENDED_OPT
+                    "basic" -> OrtSession.SessionOptions.OptLevel.BASIC_OPT
+                    else -> OrtSession.SessionOptions.OptLevel.NO_OPT
+                },
+                memoryPattern = it[1].toBoolean(),
+                arena = it[2].toBoolean(),
+                threads = it.getOrNull(3)?.toIntOrNull() ?: EngineFactory.defaultThreads(),
             )
         }
         ?: RuntimeTuning()
-    println("tuning: memoryPattern=${tuning.memoryPattern} arena=${tuning.arena} threads=${tuning.threads}")
+    println(
+        "tuning: opt=${tuning.optimization} memoryPattern=${tuning.memoryPattern} " +
+            "arena=${tuning.arena} threads=${tuning.threads}",
+    )
 
     println("== fft ==")
     checkFft()
@@ -261,33 +272,23 @@ private fun runEngine(
 }
 
 /**
- * Samples the process's resident set while a model runs.
+ * Peak resident memory from the kernel's own high-water mark (VmHWM).
  *
- * Peak RSS is the number that decides whether a model is usable on a phone at all, so
- * the harness reports it next to the timing rather than leaving it to be guessed.
+ * Peak RSS is the number that decides whether a model is usable on a phone at all. An
+ * earlier version sampled RSS every 50 ms and missed short spikes — the optimiser's
+ * allocation during session build among them — so its numbers scattered between runs.
+ * VmHWM cannot miss a spike.
  */
 private class PeakRss {
-    @Volatile private var running = true
-    @Volatile private var peak = 0L
-    private val statm = File("/proc/self/statm")
-    private val baseline = current()
-    private val thread = Thread {
-        while (running) {
-            val bytes = current()
-            if (bytes > peak) peak = bytes
-            Thread.sleep(50)
-        }
-    }.apply { isDaemon = true; start() }
+    private val baseline = read("VmRSS")
 
     /** Returns the RSS before the session was opened, and the peak reached since. */
-    fun stop(): Pair<Long, Long> {
-        running = false
-        thread.join(500)
-        return baseline to maxOf(peak, baseline)
-    }
+    fun stop(): Pair<Long, Long> = baseline to maxOf(read("VmHWM"), baseline)
 
-    private fun current(): Long = runCatching {
-        statm.readText().trim().split(" ")[1].toLong() * 4096
+    private fun read(field: String): Long = runCatching {
+        File("/proc/self/status").readLines()
+            .first { it.startsWith("$field:") }
+            .split(Regex("\\s+"))[1].toLong() * 1024
     }.getOrDefault(0L)
 }
 

@@ -134,15 +134,26 @@ class RoformerEngine(
     companion object {
         const val N_FFT = 2048
         const val HOP = 441
-        const val FRAMES = 1101
         const val BINS = N_FFT / 2 + 1
         const val CHANNELS = 2
 
-        /** 485 100 samples ≈ 11.0 s — the chunk the export was traced for. */
+        /**
+         * 551 frames = 242 550 samples ≈ 5.5 s per chunk.
+         *
+         * The export was traced at 1101 frames (11 s); the app's rewritten graph takes
+         * any length, and half the chunk halves the attention working set. Measured,
+         * optimiser off: peak memory 2.66 GB → 1.77 GB at the same real-time factor.
+         * tools/verify/musdb_eval.py scores both chunk lengths against MUSDB18.
+         */
+        const val FRAMES = 551
+
         const val WINDOW = (FRAMES - 1) * HOP
 
-        /** 8 s step, i.e. ~3 s of overlap between neighbouring chunks. */
-        const val STRIDE = 8 * 44_100
+        /**
+         * 4 s step: 1.5 s of overlap, the same 27 % the published 11 s / 8 s recipe
+         * uses, so the compute per second of audio is unchanged.
+         */
+        const val STRIDE = 4 * 44_100
 
         private const val TENSOR_VALUES = BINS * CHANNELS * FRAMES * 2
         private val SHAPE = longArrayOf(1, (BINS * CHANNELS).toLong(), FRAMES.toLong(), 2)

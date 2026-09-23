@@ -12,6 +12,7 @@ import app.cash.paparazzi.Paparazzi
 import app.signal.isolate.audio.OutputFormat
 import app.signal.isolate.model.ModelCatalog
 import app.signal.isolate.model.Stem
+import app.signal.isolate.work.RunJournal
 import app.signal.isolate.work.SeparationState
 import app.signal.isolate.work.StemResult
 import com.android.resources.NightMode
@@ -49,6 +50,7 @@ class ScreenSnapshots {
     @Test fun doneLight() = shoot("done-light", dark = false) { done() }
     @Test fun doneDark() = shoot("done-dark", dark = true) { done() }
     @Test fun failedLight() = shoot("failed-light", dark = false) { failed() }
+    @Test fun interruptedLight() = shoot("interrupted-light", dark = false) { interrupted() }
 
     @Composable
     private fun setup() = SetupView(
@@ -96,10 +98,25 @@ class ScreenSnapshots {
 
     @Composable
     private fun failed() = FailedView(
-        message = "Ran out of memory. Mel-Band RoFormer needs about 8 GB of free RAM — " +
-            "close other apps or pick a smaller model.",
+        message = "Not enough free memory to start Mel-Band RoFormer: it needs about 2.1 GB, " +
+            "and 1.4 GB is free right now. Close other apps and try again, or pick a " +
+            "smaller model.",
         onBack = {},
     )
+
+    @Composable
+    private fun interrupted() {
+        InterruptedNotice(
+            RunJournal.Interrupted(
+                model = "HT-Demucs FT (vocals)",
+                track = "04 Nightdrive (master).wav",
+                stage = "loading the model",
+            ),
+            onDismiss = {},
+        )
+        SectionSpacer()
+        setup()
+    }
 
     private fun shoot(name: String, dark: Boolean, content: @Composable () -> Unit) {
         paparazzi.unsafeUpdateConfig(
