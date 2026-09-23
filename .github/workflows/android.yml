@@ -5,10 +5,12 @@ on:
     branches: ["**"]
     paths:
       - "android/**"
+      - "web/**"
       - ".github/workflows/android.yml"
   pull_request:
     paths:
       - "android/**"
+      - "web/**"
       - ".github/workflows/android.yml"
   workflow_dispatch:
 
@@ -50,6 +52,22 @@ jobs:
       - name: DSP self-checks
         working-directory: android
         run: ./gradlew :tools:verify:run --no-daemon --args="no-fixtures no-models"
+
+      # Renders every screen with layoutlib and compares it to the recorded PNGs in
+      # app/src/test/snapshots, so a visual regression fails the build.
+      - name: Screenshot tests
+        working-directory: android
+        run: ./gradlew :app:verifyPaparazziDebug --no-daemon
+
+      - name: Colour contrast (WCAG AA)
+        run: node web/contrast.mjs
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: paparazzi-failures
+          path: android/app/build/paparazzi/failures
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v4
         with:

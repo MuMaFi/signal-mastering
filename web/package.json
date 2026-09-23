@@ -1,0 +1,13 @@
+{
+  "name": "signal-isolate-preview",
+  "private": true,
+  "description": "Design preview of the signal.isolate Android app. Zero dependencies.",
+  "type": "module",
+  "scripts": {
+    "start": "node serve.mjs",
+    "check": "node contrast.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

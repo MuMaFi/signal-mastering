@@ -2,6 +2,7 @@ package app.signal.isolate.ui
 
 import android.content.Context
 import android.content.Intent
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
@@ -18,6 +19,21 @@ object Sharing {
                 }
             }
         return uri.lastPathSegment?.substringAfterLast('/') ?: "track"
+    }
+
+    /** Track length from the container header — instant, unlike a full decode. */
+    fun durationSeconds(context: Context, uri: Uri): Double? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?.let { it / 1000.0 }
+        } catch (e: RuntimeException) {
+            null
+        } finally {
+            retriever.release()
+        }
     }
 
     fun uriFor(context: Context, file: File): Uri =

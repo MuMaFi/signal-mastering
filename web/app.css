@@ -1,0 +1,559 @@
+/*
+ * Apple-flavoured design system for signal.isolate.
+ *
+ * Tokens follow Apple's system colours rather than approximating them by eye, so the
+ * preview reads the way the real thing would on an Apple device: grouped inset lists,
+ * hairline separators inset past the label, a single tint colour, and type that steps
+ * through the iOS text styles instead of arbitrary sizes.
+ *
+ * Two places depart from Apple's published values, both for contrast. The tint is
+ * systemMint, but #00C7BE carries white text at 2.2:1, so light mode darkens it to
+ * #00665F and dark mode keeps it vivid with near-black text on top, the way Apple
+ * treats its own bright fills. And the light secondary label is 76 % rather than 60 %:
+ * Apple's own value is 3.4:1 on white. `contrast.mjs` composites every translucent
+ * token over the surface it is drawn on and checks all of it against WCAG AA.
+ */
+
+/*
+ * Inter stands in for SF Pro wherever SF is not installed: SF's licence forbids
+ * shipping it to non-Apple platforms, and Inter was drawn to sit close to it. The
+ * system stack still lists Apple's own font first, so Macs and iPhones get the real
+ * thing. Like SF, this cut has an optical-size axis — `font-optical-sizing: auto`
+ * gives large titles the tighter display drawing and body text the open text one.
+ * Latin subset, 71 KB; licence in fonts/OFL.txt.
+ */
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/inter-var-latin.woff2") format("woff2-variations"),
+       url("fonts/inter-var-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+
+  /* Backgrounds */
+  --bg-grouped: #f2f2f7;
+  --bg-elevated: #ffffff;
+  --bg-pressed: #d1d1d6;
+  --bg-nav: rgba(249, 249, 249, 0.82);
+
+  /* Content */
+  --label: #000000;
+  /* Apple's 60 % secondary label is 3.4:1 on white; 76 % is the least that clears
+     4.5:1 on every light surface it appears on, badges included. */
+  --label-secondary: rgba(60, 60, 67, 0.76);
+  --label-tertiary: rgba(60, 60, 67, 0.3);
+  --separator: rgba(60, 60, 67, 0.29);
+
+  /* Tint + status */
+  --tint: #00665f;
+  --tint-fill: #00665f;
+  --on-tint: #ffffff;
+  --red: #d70015;
+  --orange: #c93400;
+  --fill-track: rgba(120, 120, 128, 0.2);
+  --segment-thumb: #ffffff;
+
+  --radius-group: 10px;
+  --radius-control: 12px;
+  --row-min: 44px;
+  --gutter: 16px;
+
+  --shadow-cta: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-grouped: #000000;
+    --bg-elevated: #1c1c1e;
+    --bg-pressed: #2c2c2e;
+    --bg-nav: rgba(28, 28, 30, 0.8);
+
+    --label: #ffffff;
+    --label-secondary: rgba(235, 235, 245, 0.6);
+    --label-tertiary: rgba(235, 235, 245, 0.3);
+    --separator: rgba(84, 84, 88, 0.65);
+
+    --tint: #5cd0c8;
+    --tint-fill: #5cd0c8;
+    --on-tint: #00332f;
+    --red: #ff453a;
+    --orange: #ff9f0a;
+    --fill-track: rgba(120, 120, 128, 0.32);
+    /* iOS lifts the selected segment to #636366 in dark mode; the card colour would
+       sit almost invisibly on the dark track. */
+    --segment-thumb: #636366;
+
+    --shadow-cta: none;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg-grouped: #000000;
+  --bg-elevated: #1c1c1e;
+  --bg-pressed: #2c2c2e;
+  --bg-nav: rgba(28, 28, 30, 0.8);
+  --label: #ffffff;
+  --label-secondary: rgba(235, 235, 245, 0.6);
+  --label-tertiary: rgba(235, 235, 245, 0.3);
+  --separator: rgba(84, 84, 88, 0.65);
+  --tint: #5cd0c8;
+  --tint-fill: #5cd0c8;
+  --on-tint: #00332f;
+  --red: #ff453a;
+  --orange: #ff9f0a;
+  --fill-track: rgba(120, 120, 128, 0.32);
+  --segment-thumb: #636366;
+  --shadow-cta: none;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg-grouped);
+  color: var(--label);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+    "Segoe UI Variable Text", "Segoe UI", Roboto, sans-serif;
+  font-size: 17px;
+  line-height: 1.29;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-optical-sizing: auto;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+button, input, select { font: inherit; color: inherit; }
+
+/* ---------- Navigation bar ---------- */
+
+/* Transparent at the top of the page, material once content slides under it —
+   iOS's "scroll edge" appearance. */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: transparent;
+  border-bottom: 0.5px solid transparent;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.nav.scrolled {
+  background: var(--bg-nav);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom-color: var(--separator);
+}
+
+.nav-bar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--gutter);
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.nav-compact-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.nav.scrolled .nav-compact-title { opacity: 1; transform: none; }
+
+.nav-action {
+  background: none;
+  border: 0;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  color: var(--tint);
+  font-size: 17px;
+  cursor: pointer;
+  border-radius: 8px;
+  min-width: 44px;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-action:active { opacity: 0.4; }
+
+.large-title {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 var(--gutter) 22px;
+}
+
+.large-title h1 {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.028em;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter",
+    "Segoe UI Variable Display", "Segoe UI", Roboto, sans-serif;
+}
+
+.large-title p {
+  margin: 3px 0 0;
+  font-size: 15px;
+  color: var(--label-secondary);
+  letter-spacing: -0.01em;
+}
+
+/* ---------- Layout ---------- */
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 var(--gutter) 64px;
+}
+
+.group { margin: 0 0 32px; }
+
+.group-header {
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: var(--label-secondary);
+  padding: 0 16px 7px;
+  margin: 0;
+}
+
+.group-footer {
+  font-size: 13px;
+  line-height: 1.38;
+  color: var(--label-secondary);
+  padding: 7px 16px 0;
+  margin: 0;
+}
+
+.group-footer.warn { color: var(--orange); }
+
+.card {
+  background: var(--bg-elevated);
+  border-radius: var(--radius-group);
+  overflow: hidden;
+}
+
+/* ---------- Rows ---------- */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--row-min);
+  padding: 11px 16px;
+  position: relative;
+  background: var(--bg-elevated);
+  width: 100%;
+  border: 0;
+  text-align: left;
+  cursor: default;
+}
+
+.row + .row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: 0.5px;
+  background: var(--separator);
+}
+
+/* iOS insets a separator to where the row's text starts, not to the card edge. */
+.row + .row:has(.row-check)::before { left: 50px; }
+
+.row.tappable { cursor: pointer; }
+.row.tappable:active { background: var(--bg-pressed); }
+.row.tappable:active::before,
+.row.tappable:active + .row::before { background: transparent; }
+
+.row-body { flex: 1; min-width: 0; }
+
+.row-title {
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  display: block;
+}
+
+.row-subtitle {
+  display: block;
+  font-size: 13px;
+  line-height: 1.38;
+  color: var(--label-secondary);
+  margin-top: 2px;
+  letter-spacing: -0.005em;
+}
+
+.row-value {
+  font-size: 17px;
+  color: var(--label-secondary);
+  letter-spacing: -0.02em;
+  flex-shrink: 0;
+}
+
+.row-check {
+  width: 22px;
+  flex-shrink: 0;
+  color: var(--tint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.row-check svg { opacity: 0; transform: scale(0.6); transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.row[aria-checked="true"] .row-check svg { opacity: 1; transform: none; }
+
+.chevron { color: var(--label-tertiary); flex-shrink: 0; }
+
+.badge {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--label-secondary);
+  background: var(--fill-track);
+  border-radius: 100px;
+  padding: 2px 8px;
+  flex-shrink: 0;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.badge.ready { color: var(--tint); background: color-mix(in srgb, var(--tint) 14%, transparent); }
+
+/* ---------- Switch ---------- */
+
+.switch {
+  width: 51px;
+  height: 31px;
+  border-radius: 100px;
+  background: var(--fill-track);
+  border: 0;
+  padding: 0;
+  position: relative;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 0.22s ease;
+}
+
+.switch[aria-checked="true"] { background: var(--tint-fill); }
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 100px;
+  background: #fff;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.15), 0 1px 1px rgba(0, 0, 0, 0.16);
+  transition: transform 0.22s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.switch[aria-checked="true"]::after { transform: translateX(20px); }
+.switch:disabled { opacity: 0.45; cursor: default; }
+
+/* ---------- Segmented control ---------- */
+
+.segmented {
+  display: flex;
+  background: var(--fill-track);
+  border-radius: 9px;
+  padding: 2px;
+  position: relative;
+  margin: 0 16px 12px;
+}
+
+.group > .segmented { margin: 0; }
+
+.segmented button {
+  flex: 1;
+  border: 0;
+  background: none;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  border-radius: 7px;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  color: var(--label);
+  min-height: 32px;
+}
+
+.segmented .thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 7px;
+  background: var(--segment-thumb);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 1px 1px rgba(0, 0, 0, 0.04);
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1), width 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  z-index: 0;
+}
+
+/* ---------- Buttons ---------- */
+
+.cta {
+  display: block;
+  width: 100%;
+  min-height: 50px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: var(--tint-fill);
+  color: var(--on-tint);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+  box-shadow: var(--shadow-cta);
+  transition: transform 0.12s ease, opacity 0.12s ease;
+}
+
+.cta:active { transform: scale(0.975); opacity: 0.88; }
+.cta:disabled { background: var(--fill-track); color: var(--label-tertiary); cursor: default; box-shadow: none; transform: none; }
+
+.cta.tinted {
+  background: color-mix(in srgb, var(--tint) 16%, transparent);
+  color: var(--tint);
+  box-shadow: none;
+}
+
+.text-button {
+  background: none;
+  border: 0;
+  color: var(--tint);
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+  padding: 11px 8px;
+  min-height: var(--row-min);
+}
+
+.text-button:active { opacity: 0.4; }
+.text-button.destructive { color: var(--red); }
+
+/* ---------- Waveform ---------- */
+
+.waveform {
+  display: block;
+  width: 100%;
+  height: 48px;
+  margin-top: 10px;
+}
+
+/* ---------- Progress ---------- */
+
+.progress-track {
+  height: 4px;
+  border-radius: 100px;
+  background: var(--fill-track);
+  overflow: hidden;
+  margin: 14px 0 0;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 100px;
+  background: var(--tint-fill);
+  width: 0;
+  transition: width 0.3s linear;
+}
+
+.progress-fill.indeterminate {
+  width: 40%;
+  animation: slide 1.4s ease-in-out infinite;
+}
+
+@keyframes slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--label-secondary);
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  animation: spin 0.9s linear infinite;
+  color: var(--label-tertiary);
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.run-context {
+  font-size: 13px;
+  color: var(--label-secondary);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Preview notice ---------- */
+
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-group);
+  padding: 12px 16px;
+  margin-bottom: 32px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--label-secondary);
+}
+
+.notice svg { flex-shrink: 0; color: var(--orange); margin-top: 1px; }
+.notice b { color: var(--label); font-weight: 600; }
+
+/* ---------- Transitions ---------- */
+
+.fade-in { animation: fade 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+@keyframes fade {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- Wide screens ---------- */
+
+@media (min-width: 760px) {
+  .large-title { padding-top: 12px; }
+  .large-title h1 { font-size: 40px; }
+}

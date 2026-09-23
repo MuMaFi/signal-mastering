@@ -146,6 +146,35 @@ between this FFT and NumPy's `rfft`. See [tools/verify/README.md](tools/verify/R
 
 <br>
 
+## Design
+
+The interface follows Apple's Human Interface Guidelines rather than Material:
+grouped inset lists with hairlines inset to the text, a large title that collapses into
+a translucent bar as you scroll, UIKit-sized switches (51×31) and segmented control,
+a single tint colour, and press highlights instead of ripples. Light and dark follow
+the system.
+
+- **Type.** SF Pro may not ship outside Apple platforms, so the app uses **Inter**
+  (SIL OFL), drawn to sit close to SF. Like SF it has an optical-size axis, and each
+  iOS text style pins it to its own point size — the tighter display cut for the
+  34 sp large title, the open text cut for 13–17 sp copy. Latin subset, 165 KB.
+- **Colour.** Apple's system colours, with two changes made for contrast: systemMint
+  carries white text at only 2.2:1, and Apple's 60 % secondary label is 3.4:1 on
+  white. [`web/contrast.mjs`](../web/contrast.mjs) composites every translucent token
+  over the surface it is drawn on and checks all 26 pairs against WCAG AA.
+- **Checked by eye, not only compiled.** [Paparazzi](https://github.com/cashapp/paparazzi)
+  renders every screen, light and dark, to PNG on the JVM — no emulator. The images
+  are in [`app/src/test/snapshots/images`](app/src/test/snapshots/images) and CI fails
+  if a change alters them. Re-record after an intended change with
+  `./gradlew :app:recordPaparazziDebug`.
+
+**Try the design without a phone:** [`../web`](../web) is the same interface in a
+browser, served by a zero-dependency local server — `cd web && npm start`, then open
+http://localhost:4173. The separation there is simulated; the screens, copy and numbers
+are the app's.
+
+<br>
+
 ## Build
 
 ```bash
@@ -208,3 +237,5 @@ models, so shipping that slice would only produce crashes.
 - **HT-Demucs** — [facebookresearch/demucs](https://github.com/facebookresearch/demucs) (MIT),
   ONNX exports by [StemSplitio](https://huggingface.co/StemSplitio).
 - **ONNX Runtime** — Microsoft (MIT).
+- **Inter** — Rasmus Andersson and the Inter Project Authors, SIL Open Font License
+  1.1. The licence ships inside the APK at `assets/licenses/Inter-OFL.txt`.

@@ -2,6 +2,9 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    // Renders the Compose screens to PNG on the JVM (layoutlib), so the Android UI is
+    // checked by eye the same way the web preview is — no emulator needed.
+    alias(libs.plugins.paparazzi)
 }
 
 android {
@@ -83,4 +86,6 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     debugImplementation(libs.androidx.ui.tooling)
+
+    testImplementation(libs.junit)
 }

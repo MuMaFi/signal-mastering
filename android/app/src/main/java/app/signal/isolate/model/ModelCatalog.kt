@@ -75,7 +75,8 @@ object ModelCatalog {
         ),
         stems = listOf(Stem.VOCALS, Stem.INSTRUMENTAL),
         quality = "Best separation available offline. Clean sibilance, very little instrumental bleed.",
-        speedHint = "~1.5x real time — a 4-minute song takes about 6 minutes.",
+        // RTF 2.1 through ONNX Runtime's Java API, the closest proxy here for Android.
+        speedHint = "~2x real time — a 4-minute song takes about 8 minutes.",
         minRamGb = 8,
         license = "MIT",
         source = "https://huggingface.co/silverdaw/mel-band-roformer-vocals-onnx",

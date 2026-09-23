@@ -1,48 +1,32 @@
 package app.signal.isolate.ui
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.signal.isolate.audio.AudioDecoder
 import app.signal.isolate.audio.OutputFormat
 import app.signal.isolate.model.DeviceCapability
 import app.signal.isolate.model.ModelCatalog
@@ -53,8 +37,15 @@ import app.signal.isolate.work.SeparationController
 import app.signal.isolate.work.SeparationRequest
 import app.signal.isolate.work.SeparationService
 import app.signal.isolate.work.SeparationState
+import app.signal.isolate.work.StemResult
 import app.signal.isolate.work.isRunning
+import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** What the track row shows: the name at once, the length and the envelope once read. */
+internal data class TrackInfo(val seconds: Double? = null, val peaks: FloatArray? = null)
 
 @Composable
 fun MainScreen(initialAudio: Uri? = null) {
@@ -68,10 +59,9 @@ fun MainScreen(initialAudio: Uri? = null) {
     var modelId by remember { mutableStateOf(ModelCatalog.ROFORMER.id) }
     var stems by remember { mutableStateOf(setOf(Stem.VOCALS, Stem.INSTRUMENTAL)) }
     var format by remember { mutableStateOf(OutputFormat.WAV_FLOAT32) }
-    var installedRevision by remember { mutableStateOf(0) }
+    var installedRevision by remember { mutableIntStateOf(0) }
 
     val spec = ModelCatalog.byId(modelId)
-    val running = state.isRunning
 
     LaunchedEffect(initialAudio) {
         if (initialAudio != null && sourceUri == null) {
@@ -80,14 +70,24 @@ fun MainScreen(initialAudio: Uri? = null) {
         }
     }
 
-    val picker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
+    // Length first (a header read, instant), then the envelope (a real decode).
+    val track by produceState(TrackInfo(), sourceUri) {
+        val uri = sourceUri ?: run { value = TrackInfo(); return@produceState }
+        value = TrackInfo()
+        val seconds = withContext(Dispatchers.IO) { Sharing.durationSeconds(context, uri) }
+        value = TrackInfo(seconds = seconds)
+        val peaks = withContext(Dispatchers.Default) {
+            runCatching { AudioDecoder.peaks(context, uri) }.getOrNull()
+        }
+        value = TrackInfo(seconds = seconds, peaks = peaks)
+    }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching {
                 context.contentResolver.takePersistableUriPermission(
                     uri,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
             }
             sourceUri = uri
@@ -103,369 +103,349 @@ fun MainScreen(initialAudio: Uri? = null) {
         if (state is SeparationState.Done) installedRevision++
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+    LargeTitleScaffold(
+        title = "Isolate",
+        subtitle = "Separate vocals from the backing track, on your own device.",
     ) {
-        Header()
-
-        Section("1 · Track") {
-            Text(
-                text = sourceName.ifEmpty { "No file selected" },
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (sourceName.isEmpty()) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
+        when (val s = state) {
+            is SeparationState.Done -> DoneView(
+                results = s.results,
+                elapsedSeconds = s.elapsedSeconds,
+                onReset = { SeparationController.reset() },
             )
-            Spacer(Modifier.height(10.dp))
-            OutlinedButton(
-                onClick = { picker.launch(arrayOf("audio/*")) },
-                enabled = !running,
-            ) { Text(if (sourceUri == null) "Choose audio file" else "Choose another file") }
-        }
-
-        Section("2 · Model") {
-            ModelCatalog.all.forEach { candidate ->
-                ModelRow(
-                    spec = candidate,
-                    selected = candidate.id == modelId,
-                    installed = remember(candidate.id, installedRevision) {
-                        models.isInstalled(candidate)
+            is SeparationState.Failed -> FailedView(
+                message = s.message,
+                onBack = { SeparationController.reset() },
+            )
+            else -> if (s.isRunning) {
+                RunView(
+                    state = s,
+                    trackName = sourceName,
+                    seconds = track.seconds,
+                    spec = spec,
+                    stems = spec.stems.filter { it in stems },
+                    onCancel = {
+                        scope.launch {
+                            SeparationController.cancel()
+                            SeparationService.stop(context)
+                        }
                     },
-                    enabled = !running,
-                    onSelect = { modelId = candidate.id },
-                    onDelete = {
-                        models.delete(candidate)
+                )
+            } else {
+                SetupView(
+                    sourceName = sourceName,
+                    track = track,
+                    spec = spec,
+                    installed = remember(installedRevision) {
+                        ModelCatalog.all.filter { models.isInstalled(it) }.map { it.id }.toSet()
+                    },
+                    stems = stems,
+                    format = format,
+                    onPick = { picker.launch(arrayOf("audio/*")) },
+                    onModel = { modelId = it },
+                    onRemove = {
+                        models.delete(spec)
                         installedRevision++
                     },
-                    warning = DeviceCapability.warning(context, candidate),
-                )
-                Spacer(Modifier.height(10.dp))
-            }
-        }
-
-        Section("3 · Output") {
-            Text("Stems", style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                spec.stems.take(3).forEach { stem ->
-                    StemChip(stem, stems, running) { stems = toggle(stems, stem) }
-                }
-            }
-            if (spec.stems.size > 3) {
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    spec.stems.drop(3).forEach { stem ->
-                        StemChip(stem, stems, running) { stems = toggle(stems, stem) }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            Text("File format", style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.height(8.dp))
-            OutputFormat.entries.forEach { option ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .selectable(
-                            selected = option == format,
-                            enabled = !running,
-                            onClick = { format = option },
+                    onStem = { stem, on -> stems = if (on) stems + stem else stems - stem },
+                    onFormat = { format = it },
+                    onStart = {
+                        val uri = sourceUri ?: return@SetupView
+                        SeparationController.start(
+                            context,
+                            SeparationRequest(
+                                source = uri,
+                                displayName = sourceName,
+                                modelId = modelId,
+                                stems = spec.stems.filter { it in stems },
+                                format = format,
+                            ),
                         )
-                        .padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected = option == format, onClick = null, enabled = !running)
-                    Spacer(Modifier.width(10.dp))
-                    Text(option.label, style = MaterialTheme.typography.bodyMedium)
-                }
+                    },
+                    canStart = sourceUri != null && spec.stems.any { it in stems },
+                )
             }
         }
-
-        ActionPanel(
-            state = state,
-            enabled = sourceUri != null && stems.isNotEmpty(),
-            spec = spec,
-            onStart = {
-                val uri = sourceUri ?: return@ActionPanel
-                SeparationController.start(
-                    context,
-                    SeparationRequest(
-                        source = uri,
-                        displayName = sourceName,
-                        modelId = modelId,
-                        stems = spec.stems.filter { it in stems },
-                        format = format,
-                    ),
-                )
-            },
-            onCancel = {
-                scope.launch {
-                    SeparationController.cancel()
-                    SeparationService.stop(context)
-                }
-            },
-            onReset = { SeparationController.reset() },
-        )
-
-        Footer(spec)
-        Spacer(Modifier.height(24.dp))
     }
 }
 
-private fun toggle(current: Set<Stem>, stem: Stem): Set<Stem> =
-    if (stem in current) {
-        (current - stem).ifEmpty { current }
-    } else {
-        current + stem
-    }
+// ---------------------------------------------------------------- setup
 
 @Composable
-private fun StemChip(stem: Stem, selected: Set<Stem>, running: Boolean, onClick: () -> Unit) {
-    FilterChip(
-        selected = stem in selected,
-        onClick = onClick,
-        enabled = !running,
-        label = { Text(stem.label) },
-    )
-}
-
-@Composable
-private fun Header() {
-    Column {
-        Text(
-            text = "signal.isolate",
-            style = MaterialTheme.typography.headlineSmall,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Text(
-            text = "On-device stem separation. Nothing leaves the phone.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                text = title.uppercase(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                fontFamily = FontFamily.Monospace,
-            )
-            Spacer(Modifier.height(12.dp))
-            content()
-        }
-    }
-}
-
-@Composable
-private fun ModelRow(
+internal fun SetupView(
+    sourceName: String,
+    track: TrackInfo,
     spec: ModelSpec,
-    selected: Boolean,
-    installed: Boolean,
-    enabled: Boolean,
-    onSelect: () -> Unit,
-    onDelete: () -> Unit,
-    warning: String?,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .selectable(selected = selected, enabled = enabled, onClick = onSelect)
-            .background(
-                if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
-                RoundedCornerShape(12.dp),
-            )
-            .padding(12.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = selected, onClick = null, enabled = enabled)
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(spec.displayName, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    spec.subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Text(spec.quality, style = MaterialTheme.typography.bodySmall)
-        Text(
-            "${ModelManager.format(spec.totalBytes)} download · ${spec.speedHint} · " +
-                "${spec.minRamGb} GB RAM recommended",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (warning != null) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                warning,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        if (installed) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Downloaded",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.width(8.dp))
-                TextButton(onClick = onDelete, enabled = enabled) { Text("Remove") }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ActionPanel(
-    state: SeparationState,
-    enabled: Boolean,
-    spec: ModelSpec,
+    installed: Set<String>,
+    stems: Set<Stem>,
+    format: OutputFormat,
+    canStart: Boolean,
+    onPick: () -> Unit,
+    onModel: (String) -> Unit,
+    onRemove: () -> Unit,
+    onStem: (Stem, Boolean) -> Unit,
+    onFormat: (OutputFormat) -> Unit,
     onStart: () -> Unit,
-    onCancel: () -> Unit,
-    onReset: () -> Unit,
 ) {
     val context = LocalContext.current
-    Section("4 · Run") {
-        when (state) {
-            is SeparationState.Idle, is SeparationState.Cancelled -> {
-                Button(onClick = onStart, enabled = enabled, modifier = Modifier.fillMaxWidth()) {
-                    Text("Separate")
-                }
-                if (!enabled) {
-                    Spacer(Modifier.height(8.dp))
+
+    GroupHeader("Track")
+    InsetGroup {
+        ListRow(onClick = onPick, role = Role.Button, trailing = { Chevron() }) {
+            RowTitle(sourceName.ifEmpty { "Choose an audio file" })
+            RowSubtitle(
+                when {
+                    sourceName.isEmpty() -> "Any format your device can play"
+                    track.seconds != null -> clock(track.seconds)
+                    else -> "Reading…"
+                },
+            )
+        }
+        track.peaks?.let { peaks ->
+            Hairline()
+            ListRow { Waveform(peaks) }
+        }
+    }
+    SectionSpacer()
+
+    GroupHeader("Model")
+    InsetGroup {
+        ModelCatalog.all.forEachIndexed { index, candidate ->
+            if (index > 0) Hairline(startInset = 50.dp)
+            val ready = candidate.id in installed
+            ListRow(
+                onClick = { onModel(candidate.id) },
+                role = Role.RadioButton,
+                selected = candidate.id == spec.id,
+                leading = { CheckSlot(candidate.id == spec.id) },
+                trailing = {
+                    Badge(if (ready) "Ready" else ModelManager.format(candidate.totalBytes), highlighted = ready)
+                },
+            ) {
+                RowTitle(candidate.displayName)
+                RowSubtitle(candidate.subtitle)
+            }
+        }
+        if (spec.id in installed) {
+            Hairline()
+            ListRow(onClick = onRemove, role = Role.Button) {
+                RowTitle("Remove downloaded model", color = Apple.colors.red)
+            }
+        }
+    }
+    GroupFooter("${spec.quality} ${spec.speedHint}")
+    DeviceCapability.warning(context, spec)?.let { GroupFooter(it, warning = true) }
+    SectionSpacer()
+
+    GroupHeader("Stems")
+    InsetGroup {
+        spec.stems.forEachIndexed { index, stem ->
+            if (index > 0) Hairline()
+            ListRow(
+                trailing = {
+                    AppleSwitch(
+                        checked = stem in stems,
+                        onCheckedChange = { onStem(stem, it) },
+                        label = stem.label,
+                    )
+                },
+            ) { RowTitle(stem.label) }
+        }
+    }
+    GroupFooter(stemNote(spec))
+    SectionSpacer()
+
+    GroupHeader("Format")
+    SegmentedControl(
+        options = OutputFormat.entries,
+        selected = format,
+        label = { it.short },
+        onSelect = onFormat,
+    )
+    GroupFooter(formatNote(format))
+    SectionSpacer()
+
+    FilledButton(text = "Separate", onClick = onStart, enabled = canStart)
+    if (!canStart) {
+        GroupFooter("Choose a track and at least one stem.", center = true)
+    }
+}
+
+/**
+ * Only the vocals-only models build the instrumental as `mix − vocals`, which is what
+ * makes the pair sum back exactly. The four-stem model's instrumental is its own
+ * drums + bass + other, which comes close to the mix but measurably not all the way.
+ */
+private fun stemNote(spec: ModelSpec): String =
+    if (Stem.DRUMS in spec.stems) {
+        "Each stem is the model's own estimate. Together they come close to the original mix, not exactly."
+    } else {
+        "Vocals and instrumental always add back up to the original mix, exactly."
+    }
+
+private fun formatNote(format: OutputFormat): String =
+    if (format == OutputFormat.WAV_FLOAT32) {
+        "Nothing clips and nothing is rescaled — the safest choice for further editing."
+    } else {
+        "Peak-safe gain is applied only if a stem would otherwise clip."
+    }
+
+// ---------------------------------------------------------------- running
+
+@Composable
+internal fun RunView(
+    state: SeparationState,
+    trackName: String,
+    seconds: Double?,
+    spec: ModelSpec,
+    stems: List<Stem>,
+    onCancel: () -> Unit,
+) {
+    val (title, detail, progress, eta) = when (state) {
+        is SeparationState.Downloading -> RunCopy(
+            "Downloading model",
+            "${spec.displayName} · ${ModelManager.format(state.done)} of ${ModelManager.format(state.total)}",
+            state.fraction,
+            null,
+        )
+        is SeparationState.Decoding -> RunCopy(
+            "Reading the track",
+            "Decoding and resampling to 44.1 kHz",
+            state.fraction,
+            null,
+        )
+        is SeparationState.Separating -> RunCopy(
+            "Separating",
+            "Chunk ${state.chunk} of ${state.chunks}",
+            state.fraction,
+            state.secondsRemaining,
+        )
+        else -> RunCopy("Writing files", "Almost there", null, null)
+    }
+
+    GroupHeader("Now separating")
+    InsetGroup {
+        ListRow {
+            RowTitle(trackName)
+            RowSubtitle(
+                listOfNotNull(
+                    seconds?.let(::clock),
+                    spec.displayName,
+                    stems.joinToString(", ") { it.label },
+                ).joinToString(" · "),
+                maxLines = 1,
+            )
+        }
+        Hairline()
+        ListRow {
+            RowTitle(title, strong = true)
+            RowSubtitle(detail, maxLines = 1)
+            Spacer(Modifier.height(14.dp))
+            ThinProgressBar(progress)
+            Spacer(Modifier.height(8.dp))
+            Row {
+                Text(
+                    text = progress?.let { "${(it * 100).toInt()}%" } ?: "Working",
+                    style = Apple.type.footnote,
+                    color = Apple.colors.secondaryLabel,
+                    modifier = Modifier.weight(1f),
+                )
+                eta?.takeIf { it > 0 }?.let {
                     Text(
-                        "Pick a file and at least one stem.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = "${humanEta(it)} left",
+                        style = Apple.type.footnote,
+                        color = Apple.colors.secondaryLabel,
                     )
                 }
             }
-
-            is SeparationState.Downloading -> Progress(
-                label = "Downloading ${spec.displayName} · " +
-                    "${ModelManager.format(state.done)} / ${ModelManager.format(state.total)}",
-                fraction = state.fraction,
-                onCancel = onCancel,
-            )
-
-            is SeparationState.Decoding -> Progress(
-                label = "Decoding audio",
-                fraction = state.fraction,
-                onCancel = onCancel,
-            )
-
-            is SeparationState.Separating -> Progress(
-                label = buildString {
-                    append("Separating · chunk ${state.chunk} of ${state.chunks}")
-                    state.secondsRemaining?.let { append(" · ~${SeparationService.formatEta(it)} left") }
-                },
-                fraction = state.fraction,
-                onCancel = onCancel,
-            )
-
-            SeparationState.Finalizing -> Progress("Writing files", null, onCancel)
-
-            is SeparationState.Done -> {
-                Text(
-                    "Done in ${SeparationService.formatEta(state.elapsedSeconds)}",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.height(12.dp))
-                state.results.forEach { result ->
-                    ResultRow(result.stem.label, result.file, result.sizeBytes)
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { Sharing.share(context, state.results.map { it.file }) }) {
-                        Text("Share all")
-                    }
-                    OutlinedButton(onClick = onReset) { Text("New track") }
-                }
-            }
-
-            is SeparationState.Failed -> {
-                Text(
-                    state.message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = onReset) { Text("Back") }
-            }
         }
     }
+    SectionSpacer()
+    TintedButton(text = "Cancel", onClick = onCancel)
+    GroupFooter("You can leave the app — the work keeps running.", center = true)
+}
+
+private data class RunCopy(val title: String, val detail: String, val progress: Float?, val eta: Long?)
+
+// ---------------------------------------------------------------- done / failed
+
+@Composable
+internal fun DoneView(results: List<StemResult>, elapsedSeconds: Long, onReset: () -> Unit) {
+    val context = LocalContext.current
+    GroupHeader("${results.size} file${if (results.size == 1) "" else "s"}")
+    InsetGroup {
+        results.forEachIndexed { index, result ->
+            if (index > 0) Hairline()
+            ResultRow(result)
+        }
+    }
+    GroupFooter("Finished in ${clock(elapsedSeconds.toDouble())}.")
+    SectionSpacer()
+    FilledButton(text = "Share all", onClick = { Sharing.share(context, results.map { it.file }) })
+    Spacer(Modifier.height(10.dp))
+    TintedButton(text = "Separate another track", onClick = onReset)
 }
 
 @Composable
-private fun ResultRow(label: String, file: java.io.File, size: Long) {
+private fun ResultRow(result: StemResult) {
     val context = LocalContext.current
     val saver = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("audio/wav"),
-    ) { uri -> if (uri != null) Sharing.copyTo(context, file, uri) }
+    ) { uri -> if (uri != null) Sharing.copyTo(context, result.file, uri) }
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                ModelManager.format(size),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        TextButton(onClick = { saver.launch(file.name) }) { Text("Save") }
-        TextButton(onClick = { Sharing.share(context, listOf(file)) }) { Text("Share") }
-    }
-}
-
-@Composable
-private fun Progress(label: String, fraction: Float?, onCancel: () -> Unit) {
-    Column {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(10.dp))
-        Box(Modifier.fillMaxWidth()) {
-            if (fraction == null) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            } else {
-                LinearProgressIndicator(
-                    progress = { fraction.coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+    ListRow(
+        trailing = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextAction("Save", onClick = { saver.launch(result.file.name) })
+                IconButton(onClick = { Sharing.share(context, listOf<File>(result.file)) }) {
+                    Icon(
+                        imageVector = AppleIcons.Share,
+                        contentDescription = "Share ${result.stem.label}",
+                        tint = Apple.colors.tint,
+                        modifier = Modifier.size(width = 16.dp, height = 20.dp),
+                    )
+                }
             }
-        }
-        Spacer(Modifier.height(12.dp))
-        OutlinedButton(onClick = onCancel) { Text("Cancel") }
+        },
+    ) {
+        RowTitle(result.stem.label)
+        // Size first: when the name is long, the ellipsis should eat the name, not the size.
+        RowSubtitle("${ModelManager.format(result.sizeBytes)} · ${result.file.name}", maxLines = 1)
     }
 }
 
 @Composable
-private fun Footer(spec: ModelSpec) {
-    Text(
-        text = "${spec.displayName} · ${spec.license} · weights fetched once from " +
-            "Hugging Face and checked against a pinned SHA-256. Separation itself is " +
-            "fully offline.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+internal fun FailedView(message: String, onBack: () -> Unit) {
+    GroupHeader("Separation failed")
+    InsetGroup {
+        ListRow(
+            leading = {
+                Icon(
+                    imageVector = AppleIcons.Warning,
+                    contentDescription = null,
+                    tint = Apple.colors.red,
+                    modifier = Modifier.size(18.dp),
+                )
+            },
+        ) {
+            RowTitle("This track could not be separated", strong = true)
+            RowSubtitle(message, maxLines = 6)
+        }
+    }
+    SectionSpacer()
+    TintedButton(text = "Back", onClick = onBack)
+}
+
+// ---------------------------------------------------------------- formatting
+
+private fun clock(seconds: Double): String {
+    val s = seconds.toLong().coerceAtLeast(0)
+    val m = s / 60
+    return if (m >= 60) "%dh %02dm".format(m / 60, m % 60) else "%d:%02d".format(m, s % 60)
+}
+
+private fun humanEta(seconds: Long): String = when {
+    seconds < 45 -> "less than a minute"
+    seconds < 3600 -> (seconds / 60.0).let { Math.round(it) }.let { "about $it minute${if (it == 1L) "" else "s"}" }
+    else -> "about ${seconds / 3600}h ${(seconds % 3600) / 60}m"
 }

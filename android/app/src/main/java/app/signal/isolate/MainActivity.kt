@@ -9,12 +9,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.consumeWindowInsets
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.Surface
-import androidx.compose.ui.Modifier
 import app.signal.isolate.ui.MainScreen
 import app.signal.isolate.ui.SignalIsolateTheme
 
@@ -30,14 +24,10 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         setContent {
+            // The screen draws under the status bar itself — the large-title bar is
+            // meant to sit behind it — so no inset padding is applied out here.
             SignalIsolateTheme {
-                Surface(
-                    modifier = Modifier
-                        .windowInsetsPadding(WindowInsets.safeDrawing)
-                        .consumeWindowInsets(WindowInsets.safeDrawing),
-                ) {
-                    MainScreen(initialAudio = incomingAudio(intent))
-                }
+                MainScreen(initialAudio = incomingAudio(intent))
             }
         }
     }

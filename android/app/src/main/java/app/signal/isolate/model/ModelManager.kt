@@ -207,10 +207,11 @@ class ModelManager(private val context: Context) {
         private const val PROGRESS_STEP = 1L shl 20
         private const val SAFETY_MARGIN = 128L * 1024 * 1024
 
+        /** Decimal units, so a download reads the same here as on the page it came from. */
         fun format(bytes: Long): String = when {
-            bytes >= 1L shl 30 -> "%.1f GB".format(bytes / 1073741824.0)
-            bytes >= 1L shl 20 -> "%.0f MB".format(bytes / 1048576.0)
-            else -> "%.0f kB".format(bytes / 1024.0)
+            bytes >= 1_000_000_000L -> "%.2f GB".format(bytes / 1e9)
+            bytes >= 1_000_000L -> "%.0f MB".format(bytes / 1e6)
+            else -> "%.0f kB".format(bytes / 1e3)
         }
     }
 }

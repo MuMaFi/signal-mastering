@@ -9,15 +9,15 @@ import java.nio.ByteOrder
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-enum class OutputFormat(val label: String, val extension: String) {
+enum class OutputFormat(val label: String, val short: String, val extension: String) {
     /** `WAVE_FORMAT_IEEE_FLOAT`. Nothing clips, nothing is rescaled. */
-    WAV_FLOAT32("WAV 32-bit float", "wav"),
+    WAV_FLOAT32("WAV 32-bit float", "32-bit float", "wav"),
 
     /** 24-bit PCM with peak-safe gain, for players that dislike float WAV. */
-    WAV_PCM24("WAV 24-bit", "wav"),
+    WAV_PCM24("WAV 24-bit", "24-bit", "wav"),
 
     /** 16-bit PCM with peak-safe gain. */
-    WAV_PCM16("WAV 16-bit", "wav"),
+    WAV_PCM16("WAV 16-bit", "16-bit", "wav"),
 }
 
 /**
