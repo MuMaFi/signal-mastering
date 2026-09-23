@@ -1,0 +1,62 @@
+name: Release
+
+# Pushing a tag like v1.0.1 builds the release APKs and publishes them as a GitHub
+# release, which gives a plain download link that installs from a phone's browser.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Android SDK packages
+        run: |
+          set -eu
+          sdkmanager=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build release APKs
+        working-directory: android
+        run: ./gradlew :app:assembleRelease --no-daemon
+
+      - name: Name the files for people, not build tools
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          out=android/app/build/outputs/apk/release
+          mkdir dist
+          cp "$out/app-arm64-v8a-release.apk" "dist/signal-isolate-$version-arm64.apk"
+          cp "$out/app-universal-release.apk" "dist/signal-isolate-$version-universal.apk"
+          # Refuse to publish an APK whose version does not match its tag.
+          aapt2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | tail -1)
+          "$aapt2" dump badging "dist/signal-isolate-$version-arm64.apk" | grep -q "versionName='$version'"
+          ls -la dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: signal.isolate ${{ github.ref_name }}
+          files: dist/*.apk
+          body: |
+            **Install on Android:** open this page on the phone, tap
+            `signal-isolate-<version>-arm64.apk` under *Assets*, then *Open*.
+            Allow your browser to install unknown apps when Android asks.
+
+            Any modern Android phone is arm64 — take that file. The *universal* one also
+            runs on x86_64 emulators and is twice the size.
+
+            Signed with the repository's test key, so it installs as an update over any
+            earlier build from this repository.

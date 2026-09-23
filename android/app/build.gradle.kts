@@ -26,7 +26,21 @@ android {
         }
     }
 
+    // One committed test key for every build, local and CI, so any APK installs as an
+    // update over any other. Not for distribution — see signing/README.md.
+    signingConfigs {
+        create("test") {
+            storeFile = file("signing/test.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("test")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -34,9 +48,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Debug-signed by default so `assembleRelease` produces an installable
-            // APK in CI. Replace with a real keystore before distributing.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("test")
         }
     }
 
